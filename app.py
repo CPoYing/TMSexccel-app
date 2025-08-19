@@ -8,7 +8,8 @@ st.title("📊 TMS出貨配送數據分析")
 st.caption("上傳 Excel/CSV → 出貨類型筆數 → 達交率（日期比較）→ 未達交清單/統計 → 自訂欄位 → 聚合 → 圖表 → 下載")
 
 # ---------- 檔案上傳 ----------
-file = st.file_uploader("上傳 Excel 或 CSV 檔", type=["xlsx", "xls", "csv"], help="最多 200 MB；Excel 需使用 openpyxl 解析")
+file = st.file_uploader("上傳 Excel 或 CSV 檔", type=["xlsx", "xls", "csv"],
+                        help="最多 200 MB；Excel 需使用 openpyxl 解析")
 
 @st.cache_data
 def load_data(file):
@@ -19,7 +20,6 @@ def load_data(file):
     return df
 
 # 自動猜測欄位
-
 def _guess_col(cols, keywords):
     for kw in keywords:
         for c in cols:
@@ -28,7 +28,6 @@ def _guess_col(cols, keywords):
     return None
 
 # 轉時間（自動解析）
-
 def to_dt(series):
     return pd.to_datetime(series, errors="coerce")
 
@@ -63,13 +62,18 @@ if file:
             due_date_default = _guess_col(cols, ["指定到貨日期", "到貨日期", "指定到貨", "到貨日"]) or (cols[0] if cols else None)
             sign_date_default = _guess_col(cols, ["客戶簽收日期", "簽收日期", "簽收日", "客戶簽收日期/時/分"]) or (cols[0] if cols else None)
             cust_id_default = _guess_col(cols, ["客戶編號", "客戶代號", "客編"]) or (cols[0] if cols else None)
-            cust_name_default = _guess_col(cols, ["客戶名稱", "客名", "客戶"] ) or (cols[0] if cols else None)
+            cust_name_default = _guess_col(cols, ["客戶名稱", "客名", "客戶"]) or (cols[0] if cols else None)
 
-            ship_type_col = st.selectbox("出貨類型欄位", options=cols, index=(cols.index(ship_type_default) if ship_type_default in cols else 0))
-            due_date_col = st.selectbox("指定到貨日期欄位", options=cols, index=(cols.index(due_date_default) if due_date_default in cols else 0))
-            sign_date_col = st.selectbox("客戶簽收日期欄位", options=cols, index=(cols.index(sign_date_default) if sign_date_default in cols else 0))
-            cust_id_col = st.selectbox("客戶編號欄位", options=cols, index=(cols.index(cust_id_default) if cust_id_default in cols else 0))
-            cust_name_col = st.selectbox("客戶名稱欄位", options=cols, index=(cols.index(cust_name_default) if cust_name_default in cols else 0))
+            ship_type_col = st.selectbox("出貨類型欄位", options=cols,
+                                         index=(cols.index(ship_type_default) if ship_type_default in cols else 0))
+            due_date_col = st.selectbox("指定到貨日期欄位", options=cols,
+                                        index=(cols.index(due_date_default) if due_date_default in cols else 0))
+            sign_date_col = st.selectbox("客戶簽收日期欄位", options=cols,
+                                         index=(cols.index(sign_date_default) if sign_date_default in cols else 0))
+            cust_id_col = st.selectbox("客戶編號欄位", options=cols,
+                                       index=(cols.index(cust_id_default) if cust_id_default in cols else 0))
+            cust_name_col = st.selectbox("客戶名稱欄位", options=cols,
+                                         index=(cols.index(cust_name_default) if cust_name_default in cols else 0))
 
         data = filtered.copy()
 
@@ -112,85 +116,84 @@ if file:
         st.markdown("---")
 
         # ---------- 功能②：達交率（僅比對日期，不含時分秒） ----------
-st.subheader("② 達交率（僅比對日期，不含時分秒）")
-if due_date_col in data.columns and sign_date_col in data.columns:
-    due_dt = to_dt(data[due_date_col])
-    sign_dt = to_dt(data[sign_date_col])
+        st.subheader("② 達交率（僅比對日期，不含時分秒）")
+        if due_date_col in data.columns and sign_date_col in data.columns:
+            due_dt = to_dt(data[due_date_col])
+            sign_dt = to_dt(data[sign_date_col])
 
-    # 僅取日期
-    due_day = due_dt.dt.normalize()
-    sign_day = sign_dt.dt.normalize()
+            # 僅取日期
+            due_day = due_dt.dt.normalize()
+            sign_day = sign_dt.dt.normalize()
 
-    # 3) 排除 出貨類型 = SWI-寄庫
-    exclude_mask = pd.Series(True, index=data.index)
-    if ship_type_col in data.columns:
-        exclude_mask = data[ship_type_col] != "SWI-寄庫"
+            # 排除 出貨類型 = SWI-寄庫
+            exclude_mask = pd.Series(True, index=data.index)
+            if ship_type_col in data.columns:
+                exclude_mask = data[ship_type_col] != "SWI-寄庫"
 
-    # 有效資料：兩日期皆有值，且不為排除類型
-    valid_mask = due_day.notna() & sign_day.notna() & exclude_mask
-    on_time = (sign_day <= due_day) & valid_mask
+            valid_mask = due_day.notna() & sign_day.notna() & exclude_mask
+            on_time = (sign_day <= due_day) & valid_mask
 
-    total_valid = int(valid_mask.sum())
-    on_time_count = int(on_time.sum())
-    rate = (on_time_count / total_valid * 100.0) if total_valid > 0 else 0.0
+            total_valid = int(valid_mask.sum())
+            on_time_count = int(on_time.sum())
+            rate = (on_time_count / total_valid * 100.0) if total_valid > 0 else 0.0
 
-    # KPI 區
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("有效筆數（兩日期皆有值）", f"{total_valid:,}")
-    k2.metric("準時交付筆數", f"{on_time_count:,}")
-    k3.metric("達交率", f"{rate:.2f}%")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("有效筆數（兩日期皆有值）", f"{total_valid:,}")
+            k2.metric("準時交付筆數", f"{on_time_count:,}")
+            k3.metric("達交率", f"{rate:.2f}%")
 
-    # 未達標（遲交）
-    late_mask = valid_mask & (sign_day > due_day)
-    delay_days = (sign_day - due_day).dt.days
+            # 未達標清單
+            late_mask = valid_mask & (sign_day > due_day)
+            delay_days = (sign_day - due_day).dt.days
 
-    # 未達標清單：加上延遲天數，日期用 yyyy-mm-dd
-    late_df = pd.DataFrame({
-        "客戶編號": data[cust_id_col] if cust_id_col in data.columns else None,
-        "客戶名稱": data[cust_name_col] if cust_name_col in data.columns else None,
-        "指定到貨日期": due_day.dt.strftime("%Y-%m-%d"),
-        "客戶簽收日期": sign_day.dt.strftime("%Y-%m-%d"),
-        "延遲天數": delay_days,
-    })[late_mask]
+            late_df = pd.DataFrame({
+                "客戶編號": data[cust_id_col] if cust_id_col in data.columns else None,
+                "客戶名稱": data[cust_name_col] if cust_name_col in data.columns else None,
+                "指定到貨日期": due_day.dt.strftime("%Y-%m-%d"),
+                "客戶簽收日期": sign_day.dt.strftime("%Y-%m-%d"),
+                "延遲天數": delay_days,
+            })[late_mask]
 
-    avg_delay = float(late_df["延遲天數"].mean()) if not late_df.empty else 0.0
-    k4.metric("平均延遲天數", f"{avg_delay:.2f}")
+            avg_delay = float(late_df["延遲天數"].mean()) if not late_df.empty else 0.0
+            k4.metric("平均延遲天數", f"{avg_delay:.2f}")
 
-    st.write("**未達標清單**（已排除出貨類型=SWI-寄庫；僅列簽收晚於指定到貨者）")
-    st.dataframe(late_df, use_container_width=True)
-    st.download_button(
-        "下載未達標清單 CSV",
-        data=late_df.to_csv(index=False).encode("utf-8-sig"),
-        file_name="未達標清單.csv",
-        mime="text/csv",
-    )
+            st.write("**未達標清單**（已排除出貨類型=SWI-寄庫；僅列簽收晚於指定到貨者）")
+            st.dataframe(late_df, use_container_width=True)
+            st.download_button(
+                "下載未達標清單 CSV",
+                data=late_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name="未達標清單.csv",
+                mime="text/csv",
+            )
 
-    # 依客戶名稱：未達交筆數與比例（排除 SWI-寄庫）
-    if cust_name_col in data.columns:
-        tmp = pd.DataFrame({
-            "客戶名稱": data[cust_name_col],
-            "是否有效": valid_mask,
-            "是否遲交": late_mask,
-        })
-        grp = tmp.groupby("客戶名稱")
-        stats = grp["是否有效"].sum().to_frame(name="有效筆數")
-        stats["未達交筆數"] = grp["是否遲交"].sum()
-        stats = stats[stats["未達交筆數"] > 0]  # 只顯示未達交 > 0
-        stats["未達交比例(%)"] = (stats["未達交筆數"] / stats["有效筆數"] * 100).round(2)
-        stats = stats.reset_index().sort_values(["未達交筆數", "未達交比例(%)"], ascending=[False, False])
+            # 依客戶名稱：未達交筆數與比例
+            if cust_name_col in data.columns:
+                tmp = pd.DataFrame({
+                    "客戶名稱": data[cust_name_col],
+                    "是否有效": valid_mask,
+                    "是否遲交": late_mask,
+                })
+                grp = tmp.groupby("客戶名稱")
+                stats = grp["是否有效"].sum().to_frame(name="有效筆數")
+                stats["未達交筆數"] = grp["是否遲交"].sum()
+                stats = stats[stats["未達交筆數"] > 0]
+                stats["未達交比例(%)"] = (stats["未達交筆數"] / stats["有效筆數"] * 100).round(2)
+                stats = stats.reset_index().sort_values(
+                    ["未達交筆數", "未達交比例(%)"], ascending=[False, False]
+                )
 
-        st.write("**依客戶名稱統計：未達交筆數與比例（僅顯示未達交>0；已排除SWI-寄庫）**")
-        st.dataframe(stats, use_container_width=True)
-        st.download_button(
-            "下載未達交統計（客戶） CSV",
-            data=stats.to_csv(index=False).encode("utf-8-sig"),
-            file_name="未達交統計_依客戶.csv",
-            mime="text/csv",
-        )
-else:
-    st.warning("請在側欄選好『指定到貨日期』與『客戶簽收日期』欄位。")
+                st.write("**依客戶名稱統計：未達交筆數與比例（僅顯示未達交>0；已排除SWI-寄庫）**")
+                st.dataframe(stats, use_container_width=True)
+                st.download_button(
+                    "下載未達交統計（客戶） CSV",
+                    data=stats.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="未達交統計_依客戶.csv",
+                    mime="text/csv",
+                )
+        else:
+            st.warning("請在側欄選好『指定到貨日期』與『客戶簽收日期』欄位。")
 
-st.markdown("---")
+        st.markdown("---")
 
         # ---------- 自訂欄位 ----------
         with st.sidebar:
@@ -268,4 +271,3 @@ st.markdown("---")
         )
 else:
     st.info("請先在上方上傳 Excel 或 CSV 檔。")
-
