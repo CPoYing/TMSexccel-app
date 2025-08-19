@@ -85,7 +85,6 @@ if file:
             )
             total_rows = int(type_counts["筆數"].sum())
 
-            # 3. 圖表類型選擇
             chart_choice = st.radio("圖表類型", ["長條圖", "圓餅圖", "折線圖"], horizontal=True)
 
             c1, c2 = st.columns([1, 1])
@@ -118,7 +117,6 @@ if file:
             due_dt = to_dt(data[due_date_col])
             sign_dt = to_dt(data[sign_date_col])
 
-            # 僅取日期
             due_day = due_dt.dt.normalize()
             sign_day = sign_dt.dt.normalize()
 
@@ -134,16 +132,16 @@ if file:
             k2.metric("準時交付筆數", f"{on_time_count:,}")
             k3.metric("達交率", f"{rate:.2f}%")
 
-            # 6. 未達標清單（客戶編號/客戶名稱/指定到貨日期/客戶簽收日期）
+            # 未達標清單
             late_mask = valid_mask & (sign_day > due_day)
             late_df = pd.DataFrame({
                 "客戶編號": data[cust_id_col] if cust_id_col in data.columns else None,
                 "客戶名稱": data[cust_name_col] if cust_name_col in data.columns else None,
-                "指定到貨日期": due_day,
-                "客戶簽收日期": sign_day,
+                "指定到貨日期": due_day.dt.strftime("%Y-%m-%d"),
+                "客戶簽收日期": sign_day.dt.strftime("%Y-%m-%d"),
             })[late_mask]
 
-            st.write("**未達標清單**（僅列有兩日期值且簽收晚於指定到貨者）")
+            st.write("**未達標清單**（僅列簽收晚於指定到貨者）")
             st.dataframe(late_df, use_container_width=True)
             st.download_button(
                 "下載未達標清單 CSV",
@@ -152,7 +150,7 @@ if file:
                 mime="text/csv",
             )
 
-            # 7. 依客戶名稱：未達交筆數與比例
+            # 依客戶名稱：未達交筆數與比例
             if cust_name_col in data.columns:
                 tmp = pd.DataFrame({
                     "客戶名稱": data[cust_name_col],
@@ -162,10 +160,11 @@ if file:
                 grp = tmp.groupby("客戶名稱")
                 stats = grp["是否有效"].sum().to_frame(name="有效筆數")
                 stats["未達交筆數"] = grp["是否遲交"].sum()
+                stats = stats[stats["未達交筆數"] > 0]  # 只顯示未達交 > 0
                 stats["未達交比例(%)"] = (stats["未達交筆數"] / stats["有效筆數"] * 100).round(2)
                 stats = stats.reset_index().sort_values(["未達交筆數", "未達交比例(%)"], ascending=[False, False])
 
-                st.write("**依客戶名稱統計：未達交筆數與比例**")
+                st.write("**依客戶名稱統計：未達交筆數與比例（僅顯示未達交>0）**")
                 st.dataframe(stats, use_container_width=True)
                 st.download_button(
                     "下載未達交統計（客戶） CSV",
