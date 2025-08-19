@@ -6,7 +6,7 @@ import plotly.express as px
 
 st.set_page_config(page_title="TMS出貨配送數據分析", page_icon="📊", layout="wide")
 st.title("📊 TMS出貨配送數據分析")
-st.caption("上傳 Excel/CSV → 出貨類型筆數 → 達交率（日期比較，排除SWI-寄庫）→ 配送區域分析 → 自訂欄位 → 聚合 → 圖表 → 下載")
+st.caption("上傳 Excel/CSV → 出貨類型筆數 → 達交率（日期比較，排除SWI-寄庫）→ 配送區域分析 → 配送裝載分析 → 自訂欄位 → 聚合 → 圖表 → 下載")
 
 # ---------- 檔案上傳 ----------
 file = st.file_uploader(
@@ -49,8 +49,8 @@ def extract_city(addr):
 if file:
     df = load_data(file)
 
-    # Tabs：分析 / 原始資料
-    tab_analysis, tab_raw = st.tabs(["📊 出貨&達交分析", "📄 原始資料預覽"])
+    # Tabs：分析 / 原始資料 / 聚合結果
+    tab_analysis, tab_raw, tab_agg = st.tabs(["📊 出貨&達交分析", "📄 原始資料預覽", "📦 處理後資料（聚合結果）"])
 
     with tab_raw:
         st.subheader("原始資料預覽")
@@ -79,6 +79,14 @@ if file:
             cust_id_default = _guess_col(cols, ["客戶編號", "客戶代號", "客編"]) or (cols[0] if cols else None)
             cust_name_default = _guess_col(cols, ["客戶名稱", "客名", "客戶"]) or (cols[0] if cols else None)
             address_default = _guess_col(cols, ["地址", "收貨地址", "送貨地址", "交貨地址"]) or (cols[0] if cols else None)
+            copper_ton_default = _guess_col(cols, ["銅重量(噸)", "銅重量(噸數)", "銅噸", "銅重量"]) or (cols[0] if cols else None)
+            qty_default = _guess_col(cols, ["出貨數量", "數量", "出貨量"]) or (cols[0] if cols else None)
+            shipno_default = _guess_col(cols, ["出庫單號", "出庫單", "出庫編號"]) or (cols[0] if cols else None)
+            do_default = _guess_col(cols, ["DO號", "DO", "出貨單號", "交貨單號"]) or (cols[0] if cols else None)
+            item_desc_default = _guess_col(cols, ["料號說明", "品名", "品名規格", "物料說明"]) or (cols[0] if cols else None)
+            lot_default = _guess_col(cols, ["批次", "批號", "Lot"]) or (cols[0] if cols else None)
+            fg_net_ton_default = _guess_col(cols, ["成品淨重(噸)", "淨重(噸)"]) or (cols[0] if cols else None)
+            fg_gross_ton_default = _guess_col(cols, ["成品毛重(噸)", "毛重(噸)"]) or (cols[0] if cols else None)
 
             ship_type_col = st.selectbox("出貨類型欄位", options=cols, index=(cols.index(ship_type_default) if ship_type_default in cols else 0))
             due_date_col = st.selectbox("指定到貨日期欄位", options=cols, index=(cols.index(due_date_default) if due_date_default in cols else 0))
@@ -86,6 +94,14 @@ if file:
             cust_id_col = st.selectbox("客戶編號欄位", options=cols, index=(cols.index(cust_id_default) if cust_id_default in cols else 0))
             cust_name_col = st.selectbox("客戶名稱欄位", options=cols, index=(cols.index(cust_name_default) if cust_name_default in cols else 0))
             address_col = st.selectbox("地址欄位", options=cols, index=(cols.index(address_default) if address_default in cols else 0))
+            copper_ton_col = st.selectbox("銅重量(噸) 欄位", options=cols, index=(cols.index(copper_ton_default) if copper_ton_default in cols else 0))
+            qty_col = st.selectbox("出貨數量 欄位", options=cols, index=(cols.index(qty_default) if qty_default in cols else 0))
+            ship_no_col = st.selectbox("出庫單號 欄位", options=cols, index=(cols.index(shipno_default) if shipno_default in cols else 0))
+            do_col = st.selectbox("DO號 欄位", options=cols, index=(cols.index(do_default) if do_default in cols else 0))
+            item_desc_col = st.selectbox("料號說明 欄位", options=cols, index=(cols.index(item_desc_default) if item_desc_default in cols else 0))
+            lot_col = st.selectbox("批次 欄位", options=cols, index=(cols.index(lot_default) if lot_default in cols else 0))
+            fg_net_ton_col = st.selectbox("成品淨重(噸) 欄位", options=cols, index=(cols.index(fg_net_ton_default) if fg_net_ton_default in cols else 0))
+            fg_gross_ton_col = st.selectbox("成品毛重(噸) 欄位", options=cols, index=(cols.index(fg_gross_ton_default) if fg_gross_ton_default in cols else 0))
 
             # 配送區域 TopN（每客戶顯示前幾名縣市）
             topn = st.slider("每客戶顯示前幾大縣市", min_value=1, max_value=10, value=3, step=1)
@@ -93,13 +109,13 @@ if file:
         # 套用篩選後資料
         data = filtered.copy()
 
-        # 共用：排除 SWI-寄庫（供達交率與配送區域使用）
+        # 共用：排除 SWI-寄庫（供達交率/配送區域/配送裝載使用）
         exclude_swi_mask = pd.Series(True, index=data.index)
         if ship_type_col in data.columns:
             exclude_swi_mask = data[ship_type_col] != "SWI-寄庫"
 
         # =====================================================
-        # ① 出貨類型筆數統計
+        # ① 出貨類型筆數統計（加上銅重量合計/公斤）
         # =====================================================
         st.subheader("① 出貨類型筆數統計")
         if ship_type_col in data.columns:
@@ -110,18 +126,33 @@ if file:
                 .rename_axis("出貨類型")
                 .reset_index(name="筆數")
             )
-            total_rows = int(type_counts["筆數"].sum())
+            # 銅重量合計（噸 & kg）
+            if copper_ton_col in data.columns:
+                ton_sum = (
+                    data.groupby(ship_type_col)[copper_ton_col]
+                    .sum(min_count=1)
+                    .reset_index()
+                    .rename(columns={copper_ton_col: "銅重量(噸)合計"})
+                )
+                merged = type_counts.merge(ton_sum, how="left", left_on="出貨類型", right_on=ship_type_col)
+                merged.drop(columns=[ship_type_col], inplace=True)
+                merged["銅重量(kg)合計"] = (merged["銅重量(噸)合計"] * 1000).round(3)
+            else:
+                merged = type_counts.copy()
+                merged["銅重量(噸)合計"] = None
+                merged["銅重量(kg)合計"] = None
 
+            total_rows = int(type_counts["筆數"].sum())
             chart_choice = st.radio("圖表類型", ["長條圖", "圓餅圖", "折線圖"], horizontal=True)
 
             c1, c2 = st.columns([1, 1])
             with c1:
                 st.write(f"**加總筆數：{total_rows:,}**")
-                st.dataframe(type_counts, use_container_width=True)
+                st.dataframe(merged, use_container_width=True)
                 st.download_button(
-                    "下載出貨類型筆數 CSV",
-                    data=type_counts.to_csv(index=False).encode("utf-8-sig"),
-                    file_name="出貨類型_筆數統計.csv",
+                    "下載出貨類型統計 CSV",
+                    data=merged.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="出貨類型_統計.csv",
                     mime="text/csv",
                 )
             with c2:
@@ -252,7 +283,6 @@ if file:
                     region_df.groupby([cust_name_col, "縣市"]).size()
                     .reset_index(name="筆數")
                 )
-                # 先計算每個客戶的總筆數，再計算該客戶在各縣市的佔比
                 cust_city["客戶總筆數"] = cust_city.groupby(cust_name_col)["筆數"].transform("sum")
                 cust_city["縣市佔比(%)"] = (cust_city["筆數"] / cust_city["客戶總筆數"] * 100).round(2)
                 cust_city = cust_city.sort_values([cust_name_col, "筆數"], ascending=[True, False])
@@ -274,7 +304,45 @@ if file:
         st.markdown("---")
 
         # =====================================================
-        # 自訂欄位 → 聚合 → 視覺化 → 下載
+        # ④ 配送裝載分析（依出庫單號前13碼視為同一車；排除 SWI-寄庫）
+        # =====================================================
+        st.subheader("④ 配送裝載分析（出庫單號前13碼=同車，排除 SWI-寄庫）")
+        if ship_no_col in data.columns:
+            load_df = data[exclude_swi_mask].copy()
+            load_df["車次代碼"] = load_df[ship_no_col].astype(str).str[:13]
+            # 清單欄位
+            cols_to_show = [ship_no_col, do_col, item_desc_col, lot_col, qty_col, copper_ton_col, fg_net_ton_col, fg_gross_ton_col]
+            safe_cols = [c for c in cols_to_show if c in load_df.columns]
+            display_df = load_df[safe_cols].copy()
+            display_df.columns = [
+                "出庫單號" if c == ship_no_col else
+                "DO號" if c == do_col else
+                "料號說明" if c == item_desc_col else
+                "批次" if c == lot_col else
+                "出貨數量" if c == qty_col else
+                "銅重量(噸)" if c == copper_ton_col else
+                "成品淨重(噸)" if c == fg_net_ton_col else
+                "成品毛重(噸)" if c == fg_gross_ton_col else c
+                for c in safe_cols
+            ]
+            # 依車次排序方便檢視
+            display_df = display_df.sort_values(by=["出庫單號"]).reset_index(drop=True)
+
+            st.write("**配送裝載清單（依車次代碼分群的出庫單）**")
+            st.dataframe(display_df, use_container_width=True)
+            st.download_button(
+                "下載配送裝載清單 CSV",
+                data=display_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name="配送裝載清單.csv",
+                mime="text/csv",
+            )
+        else:
+            st.info("請在側欄指定『出庫單號』欄位，以進行裝載分析。")
+
+        st.markdown("---")
+
+        # =====================================================
+        # 自訂欄位 → 聚合（計算在此，但顯示搬到 tab_agg）
         # =====================================================
         with st.sidebar:
             st.subheader("🧮 新增自訂欄位")
@@ -293,14 +361,15 @@ if file:
                 st.error(f"公式錯誤：{e}")
 
         with st.sidebar:
-            st.subheader("📦 聚合彙整")
+            st.subheader("📦 聚合彙整（結果顯示在『📦 聚合結果』分頁）")
             group_cols = st.multiselect("群組欄位（可多選）", list(data_for_calc.columns))
             numeric_cols = data_for_calc.select_dtypes(include="number").columns.tolist()
             agg_col = st.selectbox("聚合欄位", numeric_cols or ["（無數值欄位）"])
             agg_fn = st.selectbox("聚合函數", ["sum", "mean", "max", "min", "count"])
 
+        # 在分析分頁中先算好，稍後在 tab_agg 顯示
         agg_df = data_for_calc.copy()
-        if group_cols and agg_col in data_for_calc.columns:
+        if group_cols and (agg_col in data_for_calc.columns):
             agg_df = (
                 agg_df.groupby(group_cols, dropna=False)[agg_col]
                 .agg(agg_fn)
@@ -308,10 +377,8 @@ if file:
                 .rename(columns={agg_col: f"{agg_fn}_{agg_col}"})
             )
 
-        st.subheader("處理後資料（聚合結果）")
-        st.dataframe(agg_df, use_container_width=True)
-
-        st.subheader("📈 視覺化")
+        # ---------- 視覺化（沿用聚合結果） ----------
+        st.subheader("📈 視覺化（使用目前聚合結果）")
         num_cols = agg_df.select_dtypes(include="number").columns.tolist()
         cat_cols = [c for c in agg_df.columns if c not in num_cols]
         if len(agg_df.columns) >= 2 and num_cols:
@@ -327,6 +394,17 @@ if file:
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("目前沒有足夠欄位可畫圖，請先做聚合或新增數值欄位。")
+
+        # 把 agg_df 暴露到外層供 tab_agg 使用
+        st.session_state["_agg_df"] = agg_df
+        st.session_state["_data_filtered"] = data
+
+    # ============= 聚合結果分頁（顯示用） =============
+    with tab_agg:
+        st.subheader("處理後資料（聚合結果）")
+        agg_df = st.session_state.get("_agg_df", pd.DataFrame())
+        data = st.session_state.get("_data_filtered", df)
+        st.dataframe(agg_df, use_container_width=True)
 
         st.subheader("⬇️ 下載")
         st.download_button(
@@ -346,5 +424,7 @@ if file:
             file_name="TMS_出貨配送分析.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
 else:
     st.info("請先在上方上傳 Excel 或 CSV 檔。")
+
