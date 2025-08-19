@@ -318,41 +318,54 @@ if file:
             load_df = data[exclude_swi_mask].copy()
             load_df["車次代碼"] = load_df[ship_no_col].astype(str).str[:13]
 
-            # 清單欄位
-            cols_to_show = [
-                ship_no_col, do_col, item_desc_col, lot_col,
-                qty_col, copper_ton_col, fg_net_ton_col, fg_gross_ton_col
+            # 想要顯示的欄位（對應：原始欄位 -> 顯示名稱）
+            wanted = [
+                (ship_no_col, "出庫單號"),
+                (do_col, "DO號"),
+                (item_desc_col, "料號說明"),
+                (lot_col, "批次"),
+                (qty_col, "出貨數量"),
+                (copper_ton_col, "銅重量(噸)"),
+                (fg_net_ton_col, "成品淨重(噸)"),
+                (fg_gross_ton_col, "成品毛重(噸)"),
             ]
-            safe_cols = [c for c in cols_to_show if c in load_df.columns]
-            display_df = load_df[safe_cols].copy()
-            display_df.columns = [
-                "出庫單號" if c == ship_no_col else
-                "DO號" if c == do_col else
-                "料號說明" if c == item_desc_col else
-                "批次" if c == lot_col else
-                "出貨數量" if c == qty_col else
-                "銅重量(噸)" if c == copper_ton_col else
-                "成品淨重(噸)" if c == fg_net_ton_col else
-                "成品毛重(噸)" if c == fg_gross_ton_col else c
-                for c in safe_cols
-            ]
-            # 依車次代碼、出庫單號排序方便檢視
-            if "出庫單號" in display_df.columns:
-                display_df = display_df.sort_values(by=["出庫單號"]).reset_index(drop=True)
 
-            st.write("**配送裝載清單（依車次代碼分群的出庫單）**")
-            st.dataframe(display_df, use_container_width=True)
-            st.download_button(
-                "下載配送裝載清單 CSV",
-                data=display_df.to_csv(index=False).encode("utf-8-sig"),
-                file_name="配送裝載清單.csv",
-                mime="text/csv",
-            )
+            # 只加入 load_df 中實際存在的欄位，並避免重覆欄名
+            display_cols = {}
+            used_names = set()
+            for orig, nice in wanted:
+                if orig and (orig in load_df.columns):
+                    name = nice
+                    # 若顯示名稱重覆，加後綴避免重名崩潰
+                    idx = 2
+                    while name in used_names:
+                        name = f"{nice} ({idx})"
+                        idx += 1
+                    display_cols[name] = load_df[orig]
+                    used_names.add(name)
+
+            # 若沒有任何可顯示欄位就提示
+            if not display_cols:
+                st.info("已排除 SWI-寄庫，但目前無可顯示的欄位，請在側欄確認欄位對應。")
+            else:
+                display_df = pd.DataFrame(display_cols)
+
+                # 依出庫單號排序（若存在）
+                if "出庫單號" in display_df.columns:
+                    display_df = display_df.sort_values(by=["出庫單號"]).reset_index(drop=True)
+
+                st.write("**配送裝載清單（依車次代碼分群的出庫單）**")
+                st.dataframe(display_df, use_container_width=True)
+                st.download_button(
+                    "下載配送裝載清單 CSV",
+                    data=display_df.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="配送裝載清單.csv",
+                    mime="text/csv",
+                )
         else:
             st.info("請在側欄指定『出庫單號』欄位，以進行裝載分析。")
 
-        st.markdown("---")
-
+       
         # =====================================================
         # 自訂欄位 → 聚合（計算在此，但顯示搬到 tab_agg）
         # =====================================================
