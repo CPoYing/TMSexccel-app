@@ -219,11 +219,16 @@ if file:
             region_df["縣市"] = region_df[address_col].apply(extract_city)
             region_df["縣市"] = region_df["縣市"].fillna("(未知)")
 
-            # 各縣市配送筆數
+            # 3-1 各縣市配送筆數 + 縣市佔比
             city_counts = (
                 region_df["縣市"].value_counts(dropna=False)
                 .rename_axis("縣市").reset_index(name="筆數")
             )
+            total_city = int(city_counts["筆數"].sum()) if not city_counts.empty else 0
+            city_counts["縣市佔比(%)"] = (
+                (city_counts["筆數"] / total_city * 100).round(2) if total_city > 0 else 0
+            )
+
             c1, c2 = st.columns([1, 1])
             with c1:
                 st.write("**各縣市配送筆數**")
@@ -241,14 +246,18 @@ if file:
 
             st.markdown("—")
 
-            # 各客戶常出貨縣市（每客戶 TopN）
+            # 3-2 各客戶常出貨縣市（每客戶 TopN）+ 客戶內部的縣市佔比
             if cust_name_col in region_df.columns:
                 cust_city = (
                     region_df.groupby([cust_name_col, "縣市"]).size()
                     .reset_index(name="筆數")
                 )
+                # 先計算每個客戶的總筆數，再計算該客戶在各縣市的佔比
+                cust_city["客戶總筆數"] = cust_city.groupby(cust_name_col)["筆數"].transform("sum")
+                cust_city["縣市佔比(%)"] = (cust_city["筆數"] / cust_city["客戶總筆數"] * 100).round(2)
                 cust_city = cust_city.sort_values([cust_name_col, "筆數"], ascending=[True, False])
                 top_table = cust_city.groupby(cust_name_col).head(topn)
+
                 st.write(f"**各客戶常出貨縣市（每客戶 Top {topn}）**")
                 st.dataframe(top_table.rename(columns={cust_name_col: "客戶名稱"}), use_container_width=True)
                 st.download_button(
