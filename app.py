@@ -1,15 +1,18 @@
 import io
+import re
 import pandas as pd
 import streamlit as st
 import plotly.express as px
 
 st.set_page_config(page_title="TMS出貨配送數據分析", page_icon="📊", layout="wide")
 st.title("📊 TMS出貨配送數據分析")
-st.caption("上傳 Excel/CSV → 出貨類型筆數 → 達交率（日期比較）→ 未達交清單/統計 → 自訂欄位 → 聚合 → 圖表 → 下載")
+st.caption("上傳 Excel/CSV → 出貨類型筆數 → 達交率（日期比較，排除SWI-寄庫）→ 配送區域分析 → 自訂欄位 → 聚合 → 圖表 → 下載")
 
 # ---------- 檔案上傳 ----------
-file = st.file_uploader("上傳 Excel 或 CSV 檔", type=["xlsx", "xls", "csv"],
-                        help="最多 200 MB；Excel 需使用 openpyxl 解析")
+file = st.file_uploader(
+    "上傳 Excel 或 CSV 檔", type=["xlsx", "xls", "csv"],
+    help="最多 200 MB；Excel 需使用 openpyxl 解析"
+)
 
 @st.cache_data
 def load_data(file):
@@ -19,7 +22,8 @@ def load_data(file):
         df = pd.read_excel(file, engine="openpyxl")
     return df
 
-# 自動猜測欄位
+# ---------- 工具函式 ----------
+
 def _guess_col(cols, keywords):
     for kw in keywords:
         for c in cols:
@@ -27,14 +31,25 @@ def _guess_col(cols, keywords):
                 return c
     return None
 
-# 轉時間（自動解析）
+
 def to_dt(series):
     return pd.to_datetime(series, errors="coerce")
 
+
+def extract_city(addr):
+    """從地址字串中擷取台灣縣市（將『臺』正規化為『台』），失敗回傳 None。"""
+    if pd.isna(addr):
+        return None
+    s = str(addr).strip().replace("臺", "台")
+    pattern = r"(台北市|新北市|桃園市|台中市|台南市|高雄市|基隆市|新竹市|新竹縣|苗栗縣|彰化縣|南投縣|雲林縣|嘉義市|嘉義縣|屏東縣|宜蘭縣|花蓮縣|台東縣|澎湖縣|金門縣|連江縣)"
+    m = re.search(pattern, s)
+    return m.group(1) if m else None
+
+# ======================== 主流程 ========================
 if file:
     df = load_data(file)
 
-    # --- Tabs: 分析 / 原始資料預覽 ---
+    # Tabs：分析 / 原始資料
     tab_analysis, tab_raw = st.tabs(["📊 出貨&達交分析", "📄 原始資料預覽"])
 
     with tab_raw:
@@ -47,7 +62,7 @@ if file:
             st.header("⚙️ 操作區")
             cols = list(df.columns)
 
-            # 基本篩選（可略）
+            # 篩選器（可略）
             filter_col = st.selectbox("選擇要篩選的欄位（可略）", ["（不篩選）"] + cols)
             filtered = df.copy()
             if filter_col != "（不篩選）":
@@ -63,21 +78,29 @@ if file:
             sign_date_default = _guess_col(cols, ["客戶簽收日期", "簽收日期", "簽收日", "客戶簽收日期/時/分"]) or (cols[0] if cols else None)
             cust_id_default = _guess_col(cols, ["客戶編號", "客戶代號", "客編"]) or (cols[0] if cols else None)
             cust_name_default = _guess_col(cols, ["客戶名稱", "客名", "客戶"]) or (cols[0] if cols else None)
+            address_default = _guess_col(cols, ["地址", "收貨地址", "送貨地址", "交貨地址"]) or (cols[0] if cols else None)
 
-            ship_type_col = st.selectbox("出貨類型欄位", options=cols,
-                                         index=(cols.index(ship_type_default) if ship_type_default in cols else 0))
-            due_date_col = st.selectbox("指定到貨日期欄位", options=cols,
-                                        index=(cols.index(due_date_default) if due_date_default in cols else 0))
-            sign_date_col = st.selectbox("客戶簽收日期欄位", options=cols,
-                                         index=(cols.index(sign_date_default) if sign_date_default in cols else 0))
-            cust_id_col = st.selectbox("客戶編號欄位", options=cols,
-                                       index=(cols.index(cust_id_default) if cust_id_default in cols else 0))
-            cust_name_col = st.selectbox("客戶名稱欄位", options=cols,
-                                         index=(cols.index(cust_name_default) if cust_name_default in cols else 0))
+            ship_type_col = st.selectbox("出貨類型欄位", options=cols, index=(cols.index(ship_type_default) if ship_type_default in cols else 0))
+            due_date_col = st.selectbox("指定到貨日期欄位", options=cols, index=(cols.index(due_date_default) if due_date_default in cols else 0))
+            sign_date_col = st.selectbox("客戶簽收日期欄位", options=cols, index=(cols.index(sign_date_default) if sign_date_default in cols else 0))
+            cust_id_col = st.selectbox("客戶編號欄位", options=cols, index=(cols.index(cust_id_default) if cust_id_default in cols else 0))
+            cust_name_col = st.selectbox("客戶名稱欄位", options=cols, index=(cols.index(cust_name_default) if cust_name_default in cols else 0))
+            address_col = st.selectbox("地址欄位", options=cols, index=(cols.index(address_default) if address_default in cols else 0))
 
+            # 配送區域 TopN（每客戶顯示前幾名縣市）
+            topn = st.slider("每客戶顯示前幾大縣市", min_value=1, max_value=10, value=3, step=1)
+
+        # 套用篩選後資料
         data = filtered.copy()
 
-        # ---------- 功能①：出貨類型筆數 ----------
+        # 共用：排除 SWI-寄庫（供達交率與配送區域使用）
+        exclude_swi_mask = pd.Series(True, index=data.index)
+        if ship_type_col in data.columns:
+            exclude_swi_mask = data[ship_type_col] != "SWI-寄庫"
+
+        # =====================================================
+        # ① 出貨類型筆數統計
+        # =====================================================
         st.subheader("① 出貨類型筆數統計")
         if ship_type_col in data.columns:
             type_counts = (
@@ -115,22 +138,17 @@ if file:
 
         st.markdown("---")
 
-        # ---------- 功能②：達交率（僅比對日期，不含時分秒） ----------
+        # =====================================================
+        # ② 達交率（僅比對日期，不含時分秒；排除 SWI-寄庫）
+        # =====================================================
         st.subheader("② 達交率（僅比對日期，不含時分秒）")
         if due_date_col in data.columns and sign_date_col in data.columns:
             due_dt = to_dt(data[due_date_col])
             sign_dt = to_dt(data[sign_date_col])
-
-            # 僅取日期
             due_day = due_dt.dt.normalize()
             sign_day = sign_dt.dt.normalize()
 
-            # 排除 出貨類型 = SWI-寄庫
-            exclude_mask = pd.Series(True, index=data.index)
-            if ship_type_col in data.columns:
-                exclude_mask = data[ship_type_col] != "SWI-寄庫"
-
-            valid_mask = due_day.notna() & sign_day.notna() & exclude_mask
+            valid_mask = due_day.notna() & sign_day.notna() & exclude_swi_mask
             on_time = (sign_day <= due_day) & valid_mask
 
             total_valid = int(valid_mask.sum())
@@ -142,10 +160,9 @@ if file:
             k2.metric("準時交付筆數", f"{on_time_count:,}")
             k3.metric("達交率", f"{rate:.2f}%")
 
-            # 未達標清單
+            # 未達標（遲交）清單 + 延遲天數 + 平均延遲天數
             late_mask = valid_mask & (sign_day > due_day)
             delay_days = (sign_day - due_day).dt.days
-
             late_df = pd.DataFrame({
                 "客戶編號": data[cust_id_col] if cust_id_col in data.columns else None,
                 "客戶名稱": data[cust_name_col] if cust_name_col in data.columns else None,
@@ -166,7 +183,7 @@ if file:
                 mime="text/csv",
             )
 
-            # 依客戶名稱：未達交筆數與比例
+            # 依客戶名稱：未達交筆數與比例（僅顯示未達交>0）
             if cust_name_col in data.columns:
                 tmp = pd.DataFrame({
                     "客戶名稱": data[cust_name_col],
@@ -176,11 +193,9 @@ if file:
                 grp = tmp.groupby("客戶名稱")
                 stats = grp["是否有效"].sum().to_frame(name="有效筆數")
                 stats["未達交筆數"] = grp["是否遲交"].sum()
-                stats = stats[stats["未達交筆數"] > 0]
+                stats = stats[stats["未達交筆數"] > 0]  # 只顯示未達交 > 0
                 stats["未達交比例(%)"] = (stats["未達交筆數"] / stats["有效筆數"] * 100).round(2)
-                stats = stats.reset_index().sort_values(
-                    ["未達交筆數", "未達交比例(%)"], ascending=[False, False]
-                )
+                stats = stats.reset_index().sort_values(["未達交筆數", "未達交比例(%)"], ascending=[False, False])
 
                 st.write("**依客戶名稱統計：未達交筆數與比例（僅顯示未達交>0；已排除SWI-寄庫）**")
                 st.dataframe(stats, use_container_width=True)
@@ -195,7 +210,63 @@ if file:
 
         st.markdown("---")
 
-        # ---------- 自訂欄位 ----------
+        # =====================================================
+        # ③ 配送區域分析（排除 SWI-寄庫）
+        # =====================================================
+        st.subheader("③ 配送區域分析（排除 SWI-寄庫）")
+        if address_col in data.columns:
+            region_df = data[exclude_swi_mask].copy()
+            region_df["縣市"] = region_df[address_col].apply(extract_city)
+            region_df["縣市"] = region_df["縣市"].fillna("(未知)")
+
+            # 各縣市配送筆數
+            city_counts = (
+                region_df["縣市"].value_counts(dropna=False)
+                .rename_axis("縣市").reset_index(name="筆數")
+            )
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                st.write("**各縣市配送筆數**")
+                st.dataframe(city_counts, use_container_width=True)
+                st.download_button(
+                    "下載各縣市配送筆數 CSV",
+                    data=city_counts.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="各縣市配送筆數.csv",
+                    mime="text/csv",
+                )
+            with c2:
+                if not city_counts.empty:
+                    fig_city = px.bar(city_counts, x="縣市", y="筆數")
+                    st.plotly_chart(fig_city, use_container_width=True)
+
+            st.markdown("—")
+
+            # 各客戶常出貨縣市（每客戶 TopN）
+            if cust_name_col in region_df.columns:
+                cust_city = (
+                    region_df.groupby([cust_name_col, "縣市"]).size()
+                    .reset_index(name="筆數")
+                )
+                cust_city = cust_city.sort_values([cust_name_col, "筆數"], ascending=[True, False])
+                top_table = cust_city.groupby(cust_name_col).head(topn)
+                st.write(f"**各客戶常出貨縣市（每客戶 Top {topn}）**")
+                st.dataframe(top_table.rename(columns={cust_name_col: "客戶名稱"}), use_container_width=True)
+                st.download_button(
+                    "下載各客戶常出貨縣市 CSV",
+                    data=top_table.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="各客戶常出貨縣市_TopN.csv",
+                    mime="text/csv",
+                )
+            else:
+                st.info("找不到『客戶名稱』欄位，無法產生各客戶常出貨縣市統計。")
+        else:
+            st.warning("請在側欄選擇正確的『地址』欄位。")
+
+        st.markdown("---")
+
+        # =====================================================
+        # 自訂欄位 → 聚合 → 視覺化 → 下載
+        # =====================================================
         with st.sidebar:
             st.subheader("🧮 新增自訂欄位")
             st.caption("使用現有欄位做計算，例如：`銷售額 - 成本` 或 `數量 * 單價`")
@@ -212,7 +283,6 @@ if file:
             except Exception as e:
                 st.error(f"公式錯誤：{e}")
 
-        # ---------- 聚合 ----------
         with st.sidebar:
             st.subheader("📦 聚合彙整")
             group_cols = st.multiselect("群組欄位（可多選）", list(data_for_calc.columns))
@@ -232,7 +302,6 @@ if file:
         st.subheader("處理後資料（聚合結果）")
         st.dataframe(agg_df, use_container_width=True)
 
-        # ---------- 視覺化 ----------
         st.subheader("📈 視覺化")
         num_cols = agg_df.select_dtypes(include="number").columns.tolist()
         cat_cols = [c for c in agg_df.columns if c not in num_cols]
@@ -250,7 +319,6 @@ if file:
         else:
             st.info("目前沒有足夠欄位可畫圖，請先做聚合或新增數值欄位。")
 
-        # ---------- 下載 ----------
         st.subheader("⬇️ 下載")
         st.download_button(
             "下載聚合結果 CSV",
