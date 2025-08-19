@@ -6,7 +6,7 @@ import plotly.express as px
 
 st.set_page_config(page_title="TMS出貨配送數據分析", page_icon="📊", layout="wide")
 st.title("📊 TMS出貨配送數據分析")
-st.caption("上傳 Excel/CSV → 出貨類型筆數 → 達交率（日期比較，排除SWI-寄庫）→ 配送區域分析 → 配送裝載分析 → 自訂欄位 → 聚合 → 圖表 → 下載")
+st.caption("上傳 Excel/CSV → 出貨類型筆數（含銅重量kg）→ 達交率（僅日期，排除SWI-寄庫）→ 配送區域分析 → 配送裝載分析 → 自訂欄位 → 聚合(獨立分頁) → 視覺化/下載")
 
 # ---------- 檔案上傳 ----------
 file = st.file_uploader(
@@ -23,7 +23,6 @@ def load_data(file):
     return df
 
 # ---------- 工具函式 ----------
-
 def _guess_col(cols, keywords):
     for kw in keywords:
         for c in cols:
@@ -31,10 +30,8 @@ def _guess_col(cols, keywords):
                 return c
     return None
 
-
 def to_dt(series):
     return pd.to_datetime(series, errors="coerce")
-
 
 def extract_city(addr):
     """從地址字串中擷取台灣縣市（將『臺』正規化為『台』），失敗回傳 None。"""
@@ -52,10 +49,12 @@ if file:
     # Tabs：分析 / 原始資料 / 聚合結果
     tab_analysis, tab_raw, tab_agg = st.tabs(["📊 出貨&達交分析", "📄 原始資料預覽", "📦 處理後資料（聚合結果）"])
 
+    # -------- 原始資料分頁 --------
     with tab_raw:
         st.subheader("原始資料預覽")
         st.dataframe(df, use_container_width=True)
 
+    # -------- 分析分頁 --------
     with tab_analysis:
         # ---------- 側欄操作 ----------
         with st.sidebar:
@@ -79,6 +78,8 @@ if file:
             cust_id_default = _guess_col(cols, ["客戶編號", "客戶代號", "客編"]) or (cols[0] if cols else None)
             cust_name_default = _guess_col(cols, ["客戶名稱", "客名", "客戶"]) or (cols[0] if cols else None)
             address_default = _guess_col(cols, ["地址", "收貨地址", "送貨地址", "交貨地址"]) or (cols[0] if cols else None)
+
+            # 「銅重量(噸)」欄位實際單位為 kg，這裡仍讓你對到該欄位
             copper_ton_default = _guess_col(cols, ["銅重量(噸)", "銅重量(噸數)", "銅噸", "銅重量"]) or (cols[0] if cols else None)
             qty_default = _guess_col(cols, ["出貨數量", "數量", "出貨量"]) or (cols[0] if cols else None)
             shipno_default = _guess_col(cols, ["出庫單號", "出庫單", "出庫編號"]) or (cols[0] if cols else None)
@@ -94,7 +95,7 @@ if file:
             cust_id_col = st.selectbox("客戶編號欄位", options=cols, index=(cols.index(cust_id_default) if cust_id_default in cols else 0))
             cust_name_col = st.selectbox("客戶名稱欄位", options=cols, index=(cols.index(cust_name_default) if cust_name_default in cols else 0))
             address_col = st.selectbox("地址欄位", options=cols, index=(cols.index(address_default) if address_default in cols else 0))
-            copper_ton_col = st.selectbox("銅重量(噸) 欄位", options=cols, index=(cols.index(copper_ton_default) if copper_ton_default in cols else 0))
+            copper_ton_col = st.selectbox("銅重量(噸) 欄位（實際單位=kg）", options=cols, index=(cols.index(copper_ton_default) if copper_ton_default in cols else 0))
             qty_col = st.selectbox("出貨數量 欄位", options=cols, index=(cols.index(qty_default) if qty_default in cols else 0))
             ship_no_col = st.selectbox("出庫單號 欄位", options=cols, index=(cols.index(shipno_default) if shipno_default in cols else 0))
             do_col = st.selectbox("DO號 欄位", options=cols, index=(cols.index(do_default) if do_default in cols else 0))
@@ -115,10 +116,12 @@ if file:
             exclude_swi_mask = data[ship_type_col] != "SWI-寄庫"
 
         # =====================================================
-        # ① 出貨類型筆數統計（加上銅重量合計/公斤）
+        # ① 出貨類型筆數統計（右側新增：銅重量(kg)合計；且將「銅重量(噸)」視為kg數值）
         # =====================================================
         st.subheader("① 出貨類型筆數統計")
+
         if ship_type_col in data.columns:
+            # 筆數
             type_counts = (
                 data[ship_type_col]
                 .fillna("(空白)")
@@ -126,28 +129,32 @@ if file:
                 .rename_axis("出貨類型")
                 .reset_index(name="筆數")
             )
-            # 銅重量合計（噸 & kg）
+            total_rows = int(type_counts["筆數"].sum())
+
+            # 將銅重量欄位轉為數值（實際單位=kg）
             if copper_ton_col in data.columns:
-                ton_sum = (
-                    data.groupby(ship_type_col)[copper_ton_col]
+                data["_copper_kg"] = pd.to_numeric(data[copper_ton_col], errors="coerce")
+                copper_sum = (
+                    data.groupby(ship_type_col)["_copper_kg"]
                     .sum(min_count=1)
                     .reset_index()
-                    .rename(columns={copper_ton_col: "銅重量(噸)合計"})
+                    .rename(columns={"_copper_kg": "銅重量(kg)合計"})
                 )
-                merged = type_counts.merge(ton_sum, how="left", left_on="出貨類型", right_on=ship_type_col)
-                merged.drop(columns=[ship_type_col], inplace=True)
-                merged["銅重量(kg)合計"] = (merged["銅重量(噸)合計"] * 1000).round(3)
+                merged = type_counts.merge(copper_sum, how="left", left_on="出貨類型", right_on=ship_type_col)
+                if ship_type_col in merged.columns:
+                    merged.drop(columns=[ship_type_col], inplace=True)
             else:
                 merged = type_counts.copy()
-                merged["銅重量(噸)合計"] = None
                 merged["銅重量(kg)合計"] = None
 
-            total_rows = int(type_counts["筆數"].sum())
             chart_choice = st.radio("圖表類型", ["長條圖", "圓餅圖", "折線圖"], horizontal=True)
 
             c1, c2 = st.columns([1, 1])
             with c1:
                 st.write(f"**加總筆數：{total_rows:,}**")
+                if "銅重量(kg)合計" in merged.columns:
+                    total_copper = pd.to_numeric(merged["銅重量(kg)合計"], errors="coerce").sum()
+                    st.write(f"**總銅重量 (kg)：{total_copper:,.2f}**")
                 st.dataframe(merged, use_container_width=True)
                 st.download_button(
                     "下載出貨類型統計 CSV",
@@ -214,7 +221,7 @@ if file:
                 mime="text/csv",
             )
 
-            # 依客戶名稱：未達交筆數與比例（僅顯示未達交>0）
+            # 依客戶名稱：未達交筆數與比例（僅顯示未達交 > 0）
             if cust_name_col in data.columns:
                 tmp = pd.DataFrame({
                     "客戶名稱": data[cust_name_col],
@@ -224,7 +231,7 @@ if file:
                 grp = tmp.groupby("客戶名稱")
                 stats = grp["是否有效"].sum().to_frame(name="有效筆數")
                 stats["未達交筆數"] = grp["是否遲交"].sum()
-                stats = stats[stats["未達交筆數"] > 0]  # 只顯示未達交 > 0
+                stats = stats[stats["未達交筆數"] > 0]
                 stats["未達交比例(%)"] = (stats["未達交筆數"] / stats["有效筆數"] * 100).round(2)
                 stats = stats.reset_index().sort_values(["未達交筆數", "未達交比例(%)"], ascending=[False, False])
 
@@ -304,14 +311,18 @@ if file:
         st.markdown("---")
 
         # =====================================================
-        # ④ 配送裝載分析（依出庫單號前13碼視為同一車；排除 SWI-寄庫）
+        # ④ 配送裝載分析（出庫單號前13碼=同車；排除 SWI-寄庫）
         # =====================================================
         st.subheader("④ 配送裝載分析（出庫單號前13碼=同車，排除 SWI-寄庫）")
         if ship_no_col in data.columns:
             load_df = data[exclude_swi_mask].copy()
             load_df["車次代碼"] = load_df[ship_no_col].astype(str).str[:13]
+
             # 清單欄位
-            cols_to_show = [ship_no_col, do_col, item_desc_col, lot_col, qty_col, copper_ton_col, fg_net_ton_col, fg_gross_ton_col]
+            cols_to_show = [
+                ship_no_col, do_col, item_desc_col, lot_col,
+                qty_col, copper_ton_col, fg_net_ton_col, fg_gross_ton_col
+            ]
             safe_cols = [c for c in cols_to_show if c in load_df.columns]
             display_df = load_df[safe_cols].copy()
             display_df.columns = [
@@ -325,8 +336,9 @@ if file:
                 "成品毛重(噸)" if c == fg_gross_ton_col else c
                 for c in safe_cols
             ]
-            # 依車次排序方便檢視
-            display_df = display_df.sort_values(by=["出庫單號"]).reset_index(drop=True)
+            # 依車次代碼、出庫單號排序方便檢視
+            if "出庫單號" in display_df.columns:
+                display_df = display_df.sort_values(by=["出庫單號"]).reset_index(drop=True)
 
             st.write("**配送裝載清單（依車次代碼分群的出庫單）**")
             st.dataframe(display_df, use_container_width=True)
@@ -427,4 +439,5 @@ if file:
 
 else:
     st.info("請先在上方上傳 Excel 或 CSV 檔。")
+
 
