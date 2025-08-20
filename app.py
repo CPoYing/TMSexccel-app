@@ -318,15 +318,15 @@ if file:
         # ④ 配送裝載分析（出庫單號前13碼=同車；排除 SWI-寄庫）
         # =====================================================
         st.subheader("④ 配送裝載分析（出庫單號前13碼=同車，排除 SWI-寄庫；僅完成）")
-            if ship_no_col in data.columns:
-                if status_col in data.columns:
-                    status_mask = data[status_col].astype(str).str.strip() == "完成"
-                    base_mask = exclude_swi_mask & status_mask
-                else:
-                    st.info("未對應到『通知單項次狀態』欄位，將不套用「完成」過濾。")
-                    base_mask = exclude_swi_mask
+        if ship_no_col in data.columns:
+            if status_col in data.columns:
+                status_mask = data[status_col].astype(str).str.strip() == "完成"
+                base_mask = exclude_swi_mask & status_mask
+            else:
+                st.info("未對應到『通知單項次狀態』欄位，將不套用「完成」過濾。")
+                base_mask = exclude_swi_mask
             
-                load_df = data[base_mask].copy()
+            load_df = data[base_mask].copy()
 
 
             # 以出庫單號前13碼定義「車次代碼」，但清單仍顯示完整出庫單號
