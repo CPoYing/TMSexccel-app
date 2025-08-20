@@ -317,7 +317,7 @@ if file:
         # =====================================================
         # ④ 配送裝載分析（出庫單號前13碼=同車；排除 SWI-寄庫）
         # =====================================================
-            st.subheader("④ 配送裝載分析（出庫單號前13碼=同車，排除 SWI-寄庫；僅完成）")
+        st.subheader("④ 配送裝載分析（出庫單號前13碼=同車，排除 SWI-寄庫；僅完成）")
             if ship_no_col in data.columns:
                 if status_col in data.columns:
                     status_mask = data[status_col].astype(str).str.strip() == "完成"
