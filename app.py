@@ -314,7 +314,7 @@ if file:
 # ④ 配送裝載分析（出庫單號前13碼=同車；排除 SWI-寄庫）
 # =====================================================
 st.subheader("④ 配送裝載分析（出庫單號前13碼=同車，排除 SWI-寄庫）")
-if ship_no_col in data.columns:
+    if ship_no_col in data.columns:
     load_df = data[exclude_swi_mask].copy()
 
     # 以出庫單號前13碼定義「車次代碼」，但清單仍顯示完整出庫單號
