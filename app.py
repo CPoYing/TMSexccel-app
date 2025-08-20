@@ -86,8 +86,8 @@ if file:
             do_default = _guess_col(cols, ["DO號", "DO", "出貨單號", "交貨單號"]) or (cols[0] if cols else None)
             item_desc_default = _guess_col(cols, ["料號說明", "品名", "品名規格", "物料說明"]) or (cols[0] if cols else None)
             lot_default = _guess_col(cols, ["批次", "批號", "Lot"]) or (cols[0] if cols else None)
-            fg_net_ton_default = _guess_col(cols, ["成品淨重(噸)", "淨重(噸)"]) or (cols[0] if cols else None)
-            fg_gross_ton_default = _guess_col(cols, ["成品毛重(噸)", "毛重(噸)"]) or (cols[0] if cols else None)
+            fg_net_ton_default = _guess_col(cols, ["成品淨量(噸)", "淨重(噸)"]) or (cols[0] if cols else None)
+            fg_gross_ton_default = _guess_col(cols, ["成品毛量(噸", "毛重(噸)"]) or (cols[0] if cols else None)
 
             ship_type_col = st.selectbox("出貨類型欄位", options=cols, index=(cols.index(ship_type_default) if ship_type_default in cols else 0))
             due_date_col = st.selectbox("指定到貨日期欄位", options=cols, index=(cols.index(due_date_default) if due_date_default in cols else 0))
@@ -101,8 +101,8 @@ if file:
             do_col = st.selectbox("DO號 欄位", options=cols, index=(cols.index(do_default) if do_default in cols else 0))
             item_desc_col = st.selectbox("料號說明 欄位", options=cols, index=(cols.index(item_desc_default) if item_desc_default in cols else 0))
             lot_col = st.selectbox("批次 欄位", options=cols, index=(cols.index(lot_default) if lot_default in cols else 0))
-            fg_net_ton_col = st.selectbox("成品淨重(噸) 欄位", options=cols, index=(cols.index(fg_net_ton_default) if fg_net_ton_default in cols else 0))
-            fg_gross_ton_col = st.selectbox("成品毛重(噸) 欄位", options=cols, index=(cols.index(fg_gross_ton_default) if fg_gross_ton_default in cols else 0))
+            fg_net_ton_col = st.selectbox("成品淨量(噸) 欄位", options=cols, index=(cols.index(fg_net_ton_default) if fg_net_ton_default in cols else 0))
+            fg_gross_ton_col = st.selectbox("成品毛量(噸 欄位", options=cols, index=(cols.index(fg_gross_ton_default) if fg_gross_ton_default in cols else 0))
 
             # 配送區域 TopN（每客戶顯示前幾名縣市）
             topn = st.slider("每客戶顯示前幾大縣市", min_value=1, max_value=10, value=3, step=1)
@@ -350,8 +350,8 @@ if file:
                 (lot_col, "批次"),
                 ("_qty_num", "出貨數量"),
                 ("_copper_ton", "銅重量(噸)"),   # 以 kg 轉噸顯示
-                ("_fg_net_ton", "成品淨重(噸)"),
-                ("_fg_gross_ton", "成品毛重(噸)"),
+                ("_fg_net_ton", "成品淨量(噸)"),
+                ("_fg_gross_ton", "成品毛量(噸"),
             ]
             display_cols = {}
             used_names = set()
@@ -370,7 +370,7 @@ if file:
                 display_df = pd.DataFrame(display_cols)
 
                 # 數值欄四捨五入
-                for c in ["出貨數量", "銅重量(噸)", "成品淨重(噸)", "成品毛重(噸)"]:
+                for c in ["出貨數量", "銅重量(噸)", "成品淨量(噸)", "成品毛量(噸"]:
                     if c in display_df.columns:
                         display_df[c] = pd.to_numeric(display_df[c], errors="coerce").round(3)
 
@@ -395,8 +395,8 @@ if file:
             agg_dict = {
                 "出貨數量小計": ("_qty_num", "sum"),
                 "銅重量(kg)_小計": ("_copper_kg", "sum"),
-                "成品淨重(噸)_小計": ("_fg_net_ton", "sum"),
-                "成品毛重(噸)_小計": ("_fg_gross_ton", "sum"),
+                "成品淨量(噸)_小計": ("_fg_net_ton", "sum"),
+                "成品毛量(噸_小計": ("_fg_gross_ton", "sum"),
             }
             summary = group.agg(**agg_dict).reset_index()
 
@@ -407,7 +407,7 @@ if file:
                 ).round(3)
 
             # 數值欄統一四捨五入
-            for c in ["出貨數量小計", "銅重量(kg)_小計", "成品淨重(噸)_小計", "成品毛重(噸)_小計", "銅重量(噸)_小計"]:
+            for c in ["出貨數量小計", "銅重量(kg)_小計", "成品淨量(噸)_小計", "成品毛量(噸_小計", "銅重量(噸)_小計"]:
                 if c in summary.columns:
                     summary[c] = pd.to_numeric(summary[c], errors="coerce").round(3)
 
