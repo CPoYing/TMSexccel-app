@@ -103,6 +103,10 @@ if file:
             lot_col = st.selectbox("批次 欄位", options=cols, index=(cols.index(lot_default) if lot_default in cols else 0))
             fg_net_ton_col = st.selectbox("成品淨量(噸) 欄位", options=cols, index=(cols.index(fg_net_ton_default) if fg_net_ton_default in cols else 0))
             fg_gross_ton_col = st.selectbox("成品毛量(噸 欄位", options=cols, index=(cols.index(fg_gross_ton_default) if fg_gross_ton_default in cols else 0))
+            
+            # 狀態欄（只取完成）
+            status_default = _guess_col(cols, ["通知單項次狀態", "項次狀態", "狀態"]) or (cols[0] if cols else None)
+            status_col = st.selectbox("通知單項次狀態 欄位", options=cols, index=(cols.index(status_default) if status_default in cols else 0))
 
             # 配送區域 TopN（每客戶顯示前幾名縣市）
             topn = st.slider("每客戶顯示前幾大縣市", min_value=1, max_value=10, value=3, step=1)
@@ -313,9 +317,17 @@ if file:
         # =====================================================
         # ④ 配送裝載分析（出庫單號前13碼=同車；排除 SWI-寄庫）
         # =====================================================
-        st.subheader("④ 配送裝載分析（出庫單號前13碼=同車，排除 SWI-寄庫）")
-        if ship_no_col in data.columns:
-            load_df = data[exclude_swi_mask].copy()
+            st.subheader("④ 配送裝載分析（出庫單號前13碼=同車，排除 SWI-寄庫；僅完成）")
+            if ship_no_col in data.columns:
+                if status_col in data.columns:
+                    status_mask = data[status_col].astype(str).str.strip() == "完成"
+                    base_mask = exclude_swi_mask & status_mask
+                else:
+                    st.info("未對應到『通知單項次狀態』欄位，將不套用「完成」過濾。")
+                    base_mask = exclude_swi_mask
+            
+                load_df = data[base_mask].copy()
+
 
             # 以出庫單號前13碼定義「車次代碼」，但清單仍顯示完整出庫單號
             load_df["車次代碼"] = load_df[ship_no_col].astype(str).str[:13]
