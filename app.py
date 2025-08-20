@@ -310,63 +310,63 @@ if file:
 
         st.markdown("---")
 
-       # =====================================================
+# =====================================================
 # ④ 配送裝載分析（出庫單號前13碼=同車；排除 SWI-寄庫）
 # =====================================================
 st.subheader("④ 配送裝載分析（出庫單號前13碼=同車，排除 SWI-寄庫）")
 if ship_no_col in data.columns:
     load_df = data[exclude_swi_mask].copy()
 
-    # 以出庫單號前13碼定義車次代碼（清單仍顯示完整出庫單號）
+    # 以出庫單號前13碼定義「車次代碼」，但清單仍顯示完整出庫單號
     load_df["車次代碼"] = load_df[ship_no_col].astype(str).str[:13]
 
-    # 轉數字欄位：出貨數量、銅重量(kg)（實際單位為kg，但欄名是"銅重量(噸)"）
-    load_df["_qty_num"] = pd.to_numeric(load_df[qty_col], errors="coerce") if qty_col in load_df.columns else None
-    load_df["_copper_kg"] = pd.to_numeric(load_df[copper_ton_col], errors="coerce") if copper_ton_col in load_df.columns else None
-    load_df["_copper_ton"] = load_df["_copper_kg"] / 1000.0 if "_copper_kg" in load_df else None
+    # 數值轉換：出貨數量、銅重量(kg)（原欄名為「銅重量(噸)」但實際單位是 kg）、以及成品淨/毛重(噸)
+    load_df["_qty_num"] = (
+        pd.to_numeric(load_df[qty_col], errors="coerce")
+        if qty_col in load_df.columns else pd.Series(dtype="float64", index=load_df.index)
+    )
+    load_df["_copper_kg"] = (
+        pd.to_numeric(load_df[copper_ton_col], errors="coerce")
+        if copper_ton_col in load_df.columns else pd.Series(dtype="float64", index=load_df.index)
+    )
+    load_df["_copper_ton"] = load_df["_copper_kg"] / 1000.0
 
-    # 成品淨重/毛重(噸) -> 轉數字（照你側欄對應的欄位）
-    load_df["_fg_net_ton"] = pd.to_numeric(load_df[fg_net_ton_col], errors="coerce") if fg_net_ton_col in load_df.columns else None
-    load_df["_fg_gross_ton"] = pd.to_numeric(load_df[fg_gross_ton_col], errors="coerce") if fg_gross_ton_col in load_df.columns else None
+    load_df["_fg_net_ton"] = (
+        pd.to_numeric(load_df[fg_net_ton_col], errors="coerce")
+        if fg_net_ton_col in load_df.columns else pd.Series(dtype="float64", index=load_df.index)
+    )
+    load_df["_fg_gross_ton"] = (
+        pd.to_numeric(load_df[fg_gross_ton_col], errors="coerce")
+        if fg_gross_ton_col in load_df.columns else pd.Series(dtype="float64", index=load_df.index)
+    )
 
     # ==== 明細清單 ====
-    # 用計算欄顯示，避免欄位同名衝突；出庫單號顯示完整值
-    detail_cols = []
-    def add_col(series_name, display_name):
-        """僅在來源存在時加入顯示欄，並避免同名衝突"""
-        nonlocal detail_cols
-        if series_name is None:
-            return
-        if isinstance(series_name, str):
-            if series_name not in load_df.columns:
-                return
-            sr = load_df[series_name]
-        else:
-            # 直接給 Series（如上方計算欄）
-            sr = series_name
-        # 避免重名
-        name = display_name
-        used = {c for c, _ in detail_cols}
-        idx = 2
-        while name in used:
-            name = f"{display_name} ({idx})"
-            idx += 1
-        detail_cols.append((name, sr))
+    # 使用安全命名與去重，避免欄位重名造成崩潰
+    wanted = [
+        ("車次代碼", "車次代碼"),
+        (ship_no_col, "出庫單號"),        # 顯示完整值
+        (do_col, "DO號"),
+        (item_desc_col, "料號說明"),
+        (lot_col, "批次"),
+        ("_qty_num", "出貨數量"),
+        ("_copper_ton", "銅重量(噸)"),   # 換算後顯示噸
+        ("_fg_net_ton", "成品淨重(噸)"),
+        ("_fg_gross_ton", "成品毛重(噸)"),
+    ]
+    display_cols = {}
+    used_names = set()
+    for src, nice in wanted:
+        if isinstance(src, str) and (src in load_df.columns):
+            name = nice
+            i = 2
+            while name in used_names:
+                name = f"{nice} ({i})"
+                i += 1
+            display_cols[name] = load_df[src]
+            used_names.add(name)
 
-    add_col("車次代碼", "車次代碼")
-    add_col(ship_no_col, "出庫單號")                 # 顯示完整值
-    add_col(do_col, "DO號")
-    add_col(item_desc_col, "料號說明")
-    add_col(lot_col, "批次")
-    add_col(load_df["_qty_num"], "出貨數量")
-    add_col(load_df["_copper_ton"], "銅重量(噸)")     # 用換算後的噸顯示
-    add_col(load_df["_fg_net_ton"], "成品淨重(噸)")
-    add_col(load_df["_fg_gross_ton"], "成品毛重(噸)")
-
-    if not detail_cols:
-        st.info("已排除 SWI-寄庫，但目前無可顯示欄位，請在側欄確認欄位對應。")
-    else:
-        display_df = pd.DataFrame({name: series for name, series in detail_cols})
+    if display_cols:
+        display_df = pd.DataFrame(display_cols)
 
         # 友善格式：數值欄四捨五入
         for c in ["出貨數量", "銅重量(噸)", "成品淨重(噸)", "成品毛重(噸)"]:
@@ -374,7 +374,7 @@ if ship_no_col in data.columns:
                 display_df[c] = pd.to_numeric(display_df[c], errors="coerce").round(3)
 
         # 依車次代碼、出庫單號排序
-        sort_keys = [k for k in ["車次代碼", "出庫單號"] if k in display_df.columns]
+        sort_keys = [c for c in ["車次代碼", "出庫單號"] if c in display_df.columns]
         if sort_keys:
             display_df = display_df.sort_values(by=sort_keys).reset_index(drop=True)
 
@@ -386,20 +386,24 @@ if ship_no_col in data.columns:
             file_name="配送裝載清單.csv",
             mime="text/csv",
         )
+    else:
+        st.info("已排除 SWI-寄庫，但目前無可顯示欄位，請在側欄確認欄位對應。")
 
-    # ==== 車次彙總 ====
-    # 每車：出貨數量小計、銅重量小計(kg/噸)、成品淨/毛重小計(噸)
+    # ==== 車次彙總（每車小計） ====
     group = load_df.groupby("車次代碼", dropna=False)
     summary = group.agg(
-        出貨數量小計 = ("_qty_num", "sum"),
-        銅重量(kg)_小計 = ("_copper_kg", "sum"),
-        成品淨重(噸)_小計 = ("_fg_net_ton", "sum"),
-        成品毛重(噸)_小計 = ("_fg_gross_ton", "sum"),
+        出貨數量小計=(" _qty_num".strip(), "sum"),
+        **{"銅重量(kg)_小計": ("_copper_kg", "sum")},  # 名稱含括號，必須用字典解包
+        成品淨重(噸)_小計=("_fg_net_ton", "sum"),
+        成品毛重(噸)_小計=("_fg_gross_ton", "sum"),
     ).reset_index()
 
-    # 補上銅重量(噸)小計（由 kg 轉噸）
+    # 補上銅重量(噸)_小計（由 kg 轉噸）
     if "銅重量(kg)_小計" in summary.columns:
-        summary["銅重量(噸)_小計"] = (pd.to_numeric(summary["銅重量(kg)_小計"], errors="coerce") / 1000.0).round(3)
+        summary["銅重量(噸)_小計"] = (
+            pd.to_numeric(summary["銅重量(kg)_小計"], errors="coerce") / 1000.0
+        ).round(3)
+
     # 數值欄統一四捨五入
     for c in ["出貨數量小計", "銅重量(kg)_小計", "成品淨重(噸)_小計", "成品毛重(噸)_小計"]:
         if c in summary.columns:
