@@ -35,6 +35,34 @@ ELEGANT_COLORS = {
     'dark_gray': '#2c3e50'     # 深灰
 }
 
+# 彩色調色板
+COLORFUL_PALETTE = [
+    '#DDA0DD',  # 淡紫色
+    '#87CEEB',  # 淡藍色
+    '#98FB98',  # 淡綠色
+    '#F0E68C',  # 淡金色
+    '#FFB6C1',  # 淡粉色
+    '#DEB887',  # 淡棕色
+    '#E0E0E0',  # 淡灰色
+    '#FFA07A',  # 淡橙色
+    '#20B2AA',  # 淡青色
+    '#D8BFD8',  # 薊色
+    '#AFEEEE',  # 淡藍綠色
+    '#F5DEB3'   # 小麥色
+]
+
+def format_number_with_comma(value, decimal_places=0):
+    """格式化數字：千分位 + 靠右對齊"""
+    if pd.isna(value):
+        return ""
+    try:
+        if decimal_places == 0:
+            return f"{int(value):,}"
+        else:
+            return f"{float(value):,.{decimal_places}f}"
+    except:
+        return str(value)
+
 # 自定義 CSS 樣式
 st.markdown(f"""
 <style>
@@ -278,7 +306,7 @@ def enhanced_shipment_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str
                     path=["出貨類型"],
                     values="銅重量(噸)合計",
                     title="銅重量分佈樹狀圖",
-                    color_discrete_sequence=elegant_palette
+                    color_discrete_sequence=COLORFUL_PALETTE
                 )
                 st.plotly_chart(fig_copper, use_container_width=True)
             else:
@@ -357,17 +385,22 @@ def enhanced_delivery_performance(df: pd.DataFrame, col_map: Dict[str, Optional[
             )
             
             late_details = late_details.sort_values("延遲天數", ascending=False)
-            st.dataframe(late_details, use_container_width=True, height=400)
             
-            # 延遲分佈圖 - 素雅色彩
+            # 格式化延遲天數顯示
+            display_late_details = late_details.copy()
+            display_late_details["延遲天數"] = display_late_details["延遲天數"].apply(lambda x: format_number_with_comma(x))
+            
+            st.dataframe(display_late_details, use_container_width=True, height=400)
+            
+            # 延遲分佈圖 - 彩色版
             delay_dist = late_details["延遲程度"].value_counts()
             fig_delay = px.bar(
                 x=delay_dist.index, 
                 y=delay_dist.values,
                 title="延遲程度分佈",
-                labels={"x": "延遲程度", "y": "筆數"}
+                labels={"x": "延遲程度", "y": "筆數"},
+                color_discrete_sequence=COLORFUL_PALETTE
             )
-            fig_delay.update_traces(marker_color=ELEGANT_COLORS['warning'])
             st.plotly_chart(fig_delay, use_container_width=True)
             
             st.download_button(
@@ -405,11 +438,12 @@ def enhanced_delivery_performance(df: pd.DataFrame, col_map: Dict[str, Optional[
                     x="到貨日期", 
                     y="達交率(%)",
                     title="每日達交率趨勢",
-                    markers=True
+                    markers=True,
+                    color_discrete_sequence=COLORFUL_PALETTE
                 )
-                fig_trend.update_traces(line_color=ELEGANT_COLORS['primary'], marker_color=ELEGANT_COLORS['primary'])
-                fig_trend.add_hline(y=95, line_dash="dash", line_color=ELEGANT_COLORS['success'], annotation_text="目標線(95%)")
-                fig_trend.add_hline(y=90, line_dash="dash", line_color=ELEGANT_COLORS['warning'], annotation_text="警戒線(90%)")
+                fig_trend.update_traces(line_color=COLORFUL_PALETTE[0], marker_color=COLORFUL_PALETTE[1])
+                fig_trend.add_hline(y=95, line_dash="dash", line_color=COLORFUL_PALETTE[2], annotation_text="目標線(95%)")
+                fig_trend.add_hline(y=90, line_dash="dash", line_color=COLORFUL_PALETTE[3], annotation_text="警戒線(90%)")
                 
                 st.plotly_chart(fig_trend, use_container_width=True)
         else:
@@ -440,7 +474,14 @@ def enhanced_delivery_performance(df: pd.DataFrame, col_map: Dict[str, Optional[
                 customer_performance["達交率(%)"] = (customer_performance["準時筆數"] / customer_performance["有效筆數"] * 100).round(2)
                 customer_performance = customer_performance.sort_values("達交率(%)", ascending=False)
                 
-                st.dataframe(customer_performance, use_container_width=True)
+                # 格式化客戶表現數據
+                display_customer_performance = customer_performance.copy()
+                for col in ["有效筆數", "準時筆數", "延遲筆數"]:
+                    if col in display_customer_performance.columns:
+                        display_customer_performance[col] = display_customer_performance[col].apply(lambda x: format_number_with_comma(x))
+                display_customer_performance["達交率(%)"] = display_customer_performance["達交率(%)"].apply(lambda x: f"{x:.2f}%")
+                
+                st.dataframe(display_customer_performance, use_container_width=True)
                 
                 st.download_button(
                     "📥 下載客戶表現分析",
@@ -493,15 +534,20 @@ def enhanced_area_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str]], 
     with tab1:
         col1, col2 = st.columns([1, 1])
         with col1:
-            st.dataframe(city_stats, use_container_width=True, height=400)
+            # 格式化縣市統計數據
+            display_city_stats = city_stats.copy()
+            display_city_stats["筆數"] = display_city_stats["筆數"].apply(lambda x: format_number_with_comma(x))
+            display_city_stats["佔比(%)"] = display_city_stats["佔比(%)"].apply(lambda x: f"{x:.2f}%")
+            
+            st.dataframe(display_city_stats, use_container_width=True, height=400)
         with col2:
             fig_map = px.bar(
                 city_stats.head(15), 
                 x="縣市", 
                 y="筆數",
-                title="前15縣市配送量"
+                title="前15縣市配送量",
+                color_discrete_sequence=COLORFUL_PALETTE
             )
-            fig_map.update_traces(marker_color=ELEGANT_COLORS['primary'])
             fig_map.update_layout(xaxis_tickangle=-45)
             st.plotly_chart(fig_map, use_container_width=True)
         
@@ -529,7 +575,13 @@ def enhanced_area_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str]], 
                 .sort_values([cust_name_col, "筆數"], ascending=[True, False])
             )
             
-            display_cities = top_customer_cities.rename(columns={cust_name_col: "客戶名稱"})
+            # 格式化客戶區域數據
+            display_cities = top_customer_cities.rename(columns={cust_name_col: "客戶名稱"}).copy()
+            for col in ["筆數", "客戶總筆數"]:
+                if col in display_cities.columns:
+                    display_cities[col] = display_cities[col].apply(lambda x: format_number_with_comma(x))
+            display_cities["縣市佔比(%)"] = display_cities["縣市佔比(%)"].apply(lambda x: f"{x:.2f}%")
+            
             st.dataframe(display_cities, use_container_width=True)
             
             st.download_button(
@@ -676,7 +728,7 @@ def enhanced_loading_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str]
                     x=weight_data,
                     nbinsx=min(20, len(weight_data)),
                     name="載重分佈",
-                    marker_color=ELEGANT_COLORS['secondary'],
+                    marker_color=COLORFUL_PALETTE[0],
                     opacity=0.8
                 ))
                 fig_dist.update_layout(
@@ -780,13 +832,33 @@ def main():
                         default=[]
                     )
                 
-                # 客戶篩選
+                # 客戶名稱篩選
                 selected_customers = []
                 if auto_mapping.get("cust_name"):
                     unique_customers = sorted(df[auto_mapping["cust_name"]].dropna().unique())
                     selected_customers = st.multiselect(
                         "客戶名稱",
                         options=unique_customers[:100],
+                        default=[]
+                    )
+                
+                # 客戶編號篩選
+                selected_cust_ids = []
+                if auto_mapping.get("cust_id"):
+                    unique_cust_ids = sorted(df[auto_mapping["cust_id"]].dropna().unique())
+                    selected_cust_ids = st.multiselect(
+                        "客戶編號",
+                        options=unique_cust_ids[:100],
+                        default=[]
+                    )
+                
+                # 料號說明篩選
+                selected_item_descs = []
+                if auto_mapping.get("item_desc"):
+                    unique_items = sorted(df[auto_mapping["item_desc"]].dropna().unique())
+                    selected_item_descs = st.multiselect(
+                        "料號說明",
+                        options=unique_items[:100],
                         default=[]
                     )
                 
