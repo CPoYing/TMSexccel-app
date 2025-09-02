@@ -325,18 +325,22 @@ def enhanced_shipment_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str
     # 計算銅重量統計
     if copper_ton_col and copper_ton_col in df.columns:
         df_work["_copper_numeric"] = pd.to_numeric(df_work[copper_ton_col], errors="coerce")
-        copper_stats = df_work.groupby(ship_type_col)["_copper_numeric"].agg([
-            ('銅重量_kg_合計', 'sum'),
-            ('平均銅重量_kg', 'mean')
-        ]).reset_index()
-        copper_stats.columns = ["出貨類型", "銅重量(kg)合計", "平均銅重量(kg)"]
+        copper_stats = df_work.groupby(ship_type_col).agg({
+            "_copper_numeric": ["sum", "mean"]
+        }).round(3)
+        
+        # 重新整理欄位名稱
+        copper_stats.columns = ["銅重量(kg)合計", "平均銅重量(kg)"]
+        copper_stats["出貨類型"] = copper_stats.index
+        copper_stats = copper_stats.reset_index(drop=True)
         copper_stats["銅重量(噸)合計"] = (copper_stats["銅重量(kg)合計"] / 1000).round(3)
         copper_stats["平均銅重量(噸)"] = (copper_stats["平均銅重量(kg)"] / 1000).round(3)
         
         # 合併統計數據
         final_stats = type_stats.merge(
             copper_stats[["出貨類型", "銅重量(噸)合計", "平均銅重量(噸)"]], 
-            on="出貨類型", 
+            left_on="出貨類型",
+            right_on="出貨類型", 
             how="left"
         )
     else:
@@ -599,11 +603,19 @@ def enhanced_delivery_performance(df: pd.DataFrame, col_map: Dict[str, Optional[
     
     with analysis_tab3:
         if cust_name_col and cust_name_col in df.columns:
-            customer_performance = df[valid_mask].groupby(cust_name_col).agg(
-                有效筆數=("客戶簽收日期", "count") if "客戶簽收日期" in df.columns else (cust_name_col, "count"),
-                準時筆數=(on_time_mask[valid_mask], "sum"),
-                延遲筆數=(late_mask[valid_mask], "sum")
-            ).reset_index()
+            # 建立客戶表現分析用的資料框
+            customer_analysis_df = df[valid_mask].copy()
+            customer_analysis_df["準時"] = on_time_mask[valid_mask]
+            customer_analysis_df["延遲"] = late_mask[valid_mask]
+            
+            customer_performance = customer_analysis_df.groupby(cust_name_col).agg({
+                cust_name_col: "count",  # 有效筆數
+                "準時": "sum",           # 準時筆數  
+                "延遲": "sum"            # 延遲筆數
+            }).reset_index()
+            
+            # 重新命名欄位
+            customer_performance.columns = ["客戶名稱", "有效筆數", "準時筆數", "延遲筆數"]
             
             customer_performance["達交率(%)"] = (
                 customer_performance["準時筆數"] / customer_performance["有效筆數"] * 100
@@ -853,15 +865,23 @@ def enhanced_loading_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str]
         detailed_loading_df = detailed_loading_df.sort_values(sort_columns).reset_index(drop=True)
     
     # 車次彙總統計
-    summary_agg = {}
+    summary_columns = {}
     for display_name, internal_name in numeric_display_cols.items():
         if internal_name in loading_df.columns:
-            summary_agg[display_name + "小計"] = (internal_name, "sum")
-            summary_agg[display_name + "項目數"] = (internal_name, "count")
+            summary_columns[internal_name] = ["sum", "count"]
     
-    if summary_agg:
-        trip_summary = loading_df.groupby("車次代碼").agg(summary_agg).round(3)
-        trip_summary.columns = [col[0] for col in trip_summary.columns]
+    if summary_columns:
+        trip_summary = loading_df.groupby("車次代碼").agg(summary_columns).round(3)
+        # 重新整理欄位名稱
+        new_cols = []
+        for col_tuple in trip_summary.columns:
+            internal_name, agg_func = col_tuple
+            display_name = next((k for k, v in numeric_display_cols.items() if v == internal_name), internal_name)
+            if agg_func == "sum":
+                new_cols.append(f"{display_name}小計")
+            else:
+                new_cols.append(f"{display_name}項目數")
+        trip_summary.columns = new_cols
         trip_summary = trip_summary.reset_index()
     else:
         trip_summary = loading_df.groupby("車次代碼").size().reset_index(name="項目數")
