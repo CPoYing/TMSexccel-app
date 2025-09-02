@@ -608,14 +608,15 @@ def enhanced_delivery_performance(df: pd.DataFrame, col_map: Dict[str, Optional[
             customer_analysis_df["準時"] = on_time_mask[valid_mask]
             customer_analysis_df["延遲"] = late_mask[valid_mask]
             
-            customer_performance = customer_analysis_df.groupby(cust_name_col).agg({
-                cust_name_col: "count",  # 有效筆數
-                "準時": "sum",           # 準時筆數  
-                "延遲": "sum"            # 延遲筆數
-            }).reset_index()
+            customer_performance = customer_analysis_df.groupby(cust_name_col, as_index=False).agg({
+                "準時": ["count", "sum"],  # count給有效筆數，sum給準時筆數
+                "延遲": "sum"              # 延遲筆數
+            })
             
-            # 重新命名欄位
-            customer_performance.columns = ["客戶名稱", "有效筆數", "準時筆數", "延遲筆數"]
+            # 重新整理欄位名稱
+            customer_performance.columns = [
+                "客戶名稱", "有效筆數", "準時筆數", "延遲筆數"
+            ]
             
             customer_performance["達交率(%)"] = (
                 customer_performance["準時筆數"] / customer_performance["有效筆數"] * 100
