@@ -6,12 +6,12 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 
-# 確保必要依賴
+# 依賴檢查
 try:
     import openpyxl
+    EXCEL_AVAILABLE = True
 except ImportError:
-    st.error("請安裝 openpyxl: pip install openpyxl")
-    st.stop()
+    EXCEL_AVAILABLE = False
 
 # ========================
 # 頁面設定與 CSS 樣式
@@ -112,6 +112,9 @@ def load_data(file_buffer: io.BytesIO, file_type: str) -> pd.DataFrame:
             file_buffer.seek(0)
             return pd.read_csv(file_buffer, encoding='utf-8', errors='ignore')
         elif file_type in ["xlsx", "xls"]:
+            if not EXCEL_AVAILABLE:
+                st.error("需要安裝 openpyxl 來處理 Excel 檔案: pip install openpyxl")
+                return pd.DataFrame()
             file_buffer.seek(0)
             return pd.read_excel(file_buffer, engine="openpyxl")
     except Exception as e:
@@ -294,6 +297,20 @@ def create_enhanced_metric_card(title: str, value: str, delta: str = None, delta
     </div>
     """, unsafe_allow_html=True)
 
+def safe_excel_download(df: pd.DataFrame, filename: str) -> bytes:
+    """安全的 Excel 下載功能"""
+    if not EXCEL_AVAILABLE:
+        return df.to_csv(index=False).encode("utf-8-sig")
+    
+    try:
+        buffer = io.BytesIO()
+        df.to_excel(buffer, index=False, engine='openpyxl')
+        buffer.seek(0)
+        return buffer.getvalue()
+    except Exception:
+        # 降級為 CSV
+        return df.to_csv(index=False).encode("utf-8-sig")
+
 # ========================
 # 核心分析函式優化
 # ========================
@@ -325,22 +342,19 @@ def enhanced_shipment_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str
     # 計算銅重量統計
     if copper_ton_col and copper_ton_col in df.columns:
         df_work["_copper_numeric"] = pd.to_numeric(df_work[copper_ton_col], errors="coerce")
-        copper_stats = df_work.groupby(ship_type_col).agg({
+        copper_stats = df_work.groupby(ship_type_col, as_index=False).agg({
             "_copper_numeric": ["sum", "mean"]
         }).round(3)
         
         # 重新整理欄位名稱
-        copper_stats.columns = ["銅重量(kg)合計", "平均銅重量(kg)"]
-        copper_stats["出貨類型"] = copper_stats.index
-        copper_stats = copper_stats.reset_index(drop=True)
+        copper_stats.columns = ["出貨類型", "銅重量(kg)合計", "平均銅重量(kg)"]
         copper_stats["銅重量(噸)合計"] = (copper_stats["銅重量(kg)合計"] / 1000).round(3)
         copper_stats["平均銅重量(噸)"] = (copper_stats["平均銅重量(kg)"] / 1000).round(3)
         
         # 合併統計數據
         final_stats = type_stats.merge(
             copper_stats[["出貨類型", "銅重量(噸)合計", "平均銅重量(噸)"]], 
-            left_on="出貨類型",
-            right_on="出貨類型", 
+            on="出貨類型", 
             how="left"
         )
     else:
@@ -370,16 +384,19 @@ def enhanced_shipment_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str
     tab1, tab2 = st.tabs(["📋 詳細統計", "📊 視覺化圖表"])
     
     with tab1:
-        st.dataframe(
-            final_stats.style.format({
-                "筆數": "{:,}",
-                "佔比(%)": "{:.2f}%",
-                "銅重量(噸)合計": "{:.3f}",
-                "平均銅重量(噸)": "{:.3f}"
-            }),
-            use_container_width=True,
-            height=400
-        )
+        # 格式化數值欄位
+        formatted_df = final_stats.copy()
+        for col in ["筆數"]:
+            if col in formatted_df.columns:
+                formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:,}")
+        for col in ["佔比(%)"]:
+            if col in formatted_df.columns:
+                formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:.2f}%")
+        for col in ["銅重量(噸)合計", "平均銅重量(噸)"]:
+            if col in formatted_df.columns:
+                formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "")
+        
+        st.dataframe(formatted_df, use_container_width=True, height=400)
         
         # 下載按鈕
         col1, col2 = st.columns(2)
@@ -391,16 +408,15 @@ def enhanced_shipment_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str
                 mime="text/csv",
             )
         with col2:
-            # 建立 Excel 檔案的 BytesIO 緩衝區
-            excel_buffer = io.BytesIO()
-            final_stats.to_excel(excel_buffer, index=False, engine='openpyxl')
-            excel_buffer.seek(0)
+            excel_data = safe_excel_download(final_stats, "出貨類型統計.xlsx")
+            file_ext = "xlsx" if EXCEL_AVAILABLE else "csv"
+            mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if EXCEL_AVAILABLE else "text/csv"
             
             st.download_button(
-                "📥 下載統計表 (Excel)",
-                data=excel_buffer.getvalue(),
-                file_name="出貨類型統計.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                f"📥 下載統計表 ({file_ext.upper()})",
+                data=excel_data,
+                file_name=f"出貨類型統計.{file_ext}",
+                mime=mime_type,
             )
     
     with tab2:
@@ -530,39 +546,49 @@ def enhanced_delivery_performance(df: pd.DataFrame, col_map: Dict[str, Optional[
     
     with analysis_tab1:
         if late_count > 0:
-            late_details = pd.DataFrame({
-                col: df[col] if col else None for col in [cust_id_col, cust_name_col]
-            }).assign(
-                指定到貨日期=due_day.dt.strftime("%Y-%m-%d"),
-                客戶簽收日期=sign_day.dt.strftime("%Y-%m-%d"),
-                延遲天數=delay_days
-            )[late_mask].dropna(axis=1, how="all")
+            # 建立延遲明細資料
+            late_data = []
+            late_indices = df.index[late_mask]
+            
+            for idx in late_indices:
+                row_data = {}
+                if cust_id_col and cust_id_col in df.columns:
+                    row_data["客戶編號"] = df.loc[idx, cust_id_col]
+                if cust_name_col and cust_name_col in df.columns:
+                    row_data["客戶名稱"] = df.loc[idx, cust_name_col]
+                
+                row_data.update({
+                    "指定到貨日期": due_day.loc[idx].strftime("%Y-%m-%d") if pd.notna(due_day.loc[idx]) else "",
+                    "客戶簽收日期": sign_day.loc[idx].strftime("%Y-%m-%d") if pd.notna(sign_day.loc[idx]) else "",
+                    "延遲天數": delay_days.loc[idx] if pd.notna(delay_days.loc[idx]) else 0
+                })
+                late_data.append(row_data)
+            
+            late_details = pd.DataFrame(late_data)
             
             # 延遲程度分類
-            late_details["延遲程度"] = pd.cut(
-                late_details["延遲天數"],
-                bins=[-float('inf'), 0, 3, 7, 30, float('inf')],
-                labels=["準時", "輕微延遲(1-3天)", "中度延遲(4-7天)", "重度延遲(8-30天)", "嚴重延遲(>30天)"]
-            )
+            if "延遲天數" in late_details.columns:
+                late_details["延遲程度"] = pd.cut(
+                    late_details["延遲天數"],
+                    bins=[-float('inf'), 0, 3, 7, 30, float('inf')],
+                    labels=["準時", "輕微延遲(1-3天)", "中度延遲(4-7天)", "重度延遲(8-30天)", "嚴重延遲(>30天)"]
+                )
+                
+                # 排序：延遲天數降序
+                late_details = late_details.sort_values("延遲天數", ascending=False)
             
-            # 排序：延遲天數降序
-            late_details = late_details.sort_values("延遲天數", ascending=False)
-            
-            st.dataframe(
-                late_details.style.format({"延遲天數": "{:.0f}天"}),
-                use_container_width=True,
-                height=400
-            )
+            st.dataframe(late_details, use_container_width=True, height=400)
             
             # 延遲分佈分析
-            delay_dist = late_details["延遲程度"].value_counts()
-            fig_delay = px.bar(
-                x=delay_dist.index, 
-                y=delay_dist.values,
-                title="延遲程度分佈",
-                labels={"x": "延遲程度", "y": "筆數"}
-            )
-            st.plotly_chart(fig_delay, use_container_width=True)
+            if "延遲程度" in late_details.columns:
+                delay_dist = late_details["延遲程度"].value_counts()
+                fig_delay = px.bar(
+                    x=delay_dist.index, 
+                    y=delay_dist.values,
+                    title="延遲程度分佈",
+                    labels={"x": "延遲程度", "y": "筆數"}
+                )
+                st.plotly_chart(fig_delay, use_container_width=True)
             
             st.download_button(
                 "📥 下載未達標明細",
@@ -576,78 +602,97 @@ def enhanced_delivery_performance(df: pd.DataFrame, col_map: Dict[str, Optional[
     with analysis_tab2:
         if total_valid >= 7:  # 至少要有一週的數據
             # 依日期統計達交率趨勢
-            df_trend = df[valid_mask].copy()
-            df_trend["到貨日期"] = due_day[valid_mask]
-            df_trend["準時"] = on_time_mask[valid_mask]
+            trend_data = []
+            valid_indices = df.index[valid_mask]
             
-            daily_trend = df_trend.groupby(df_trend["到貨日期"].dt.date).agg(
-                總筆數=("準時", "count"),
-                準時筆數=("準時", "sum")
-            )
-            daily_trend["達交率(%)"] = (daily_trend["準時筆數"] / daily_trend["總筆數"] * 100).round(2)
-            daily_trend = daily_trend.reset_index()
+            for idx in valid_indices:
+                trend_data.append({
+                    "到貨日期": due_day.loc[idx].date() if pd.notna(due_day.loc[idx]) else None,
+                    "準時": on_time_mask.loc[idx]
+                })
             
-            fig_trend = px.line(
-                daily_trend, 
-                x="到貨日期", 
-                y="達交率(%)",
-                title="每日達交率趨勢",
-                markers=True
-            )
-            fig_trend.add_hline(y=95, line_dash="dash", line_color="green", annotation_text="目標線(95%)")
-            fig_trend.add_hline(y=90, line_dash="dash", line_color="orange", annotation_text="警戒線(90%)")
+            trend_df = pd.DataFrame(trend_data)
+            trend_df = trend_df.dropna(subset=["到貨日期"])
             
-            st.plotly_chart(fig_trend, use_container_width=True)
+            if not trend_df.empty:
+                daily_trend = trend_df.groupby("到貨日期", as_index=False).agg({
+                    "準時": ["count", "sum"]
+                })
+                daily_trend.columns = ["到貨日期", "總筆數", "準時筆數"]
+                daily_trend["達交率(%)"] = (daily_trend["準時筆數"] / daily_trend["總筆數"] * 100).round(2)
+                
+                fig_trend = px.line(
+                    daily_trend, 
+                    x="到貨日期", 
+                    y="達交率(%)",
+                    title="每日達交率趨勢",
+                    markers=True
+                )
+                fig_trend.add_hline(y=95, line_dash="dash", line_color="green", annotation_text="目標線(95%)")
+                fig_trend.add_hline(y=90, line_dash="dash", line_color="orange", annotation_text="警戒線(90%)")
+                
+                st.plotly_chart(fig_trend, use_container_width=True)
+            else:
+                st.info("無法建立趨勢圖，日期資料不足")
         else:
             st.info("數據量不足，無法分析趨勢（需至少7筆記錄）")
     
     with analysis_tab3:
         if cust_name_col and cust_name_col in df.columns:
-            # 建立客戶表現分析用的資料框
-            customer_analysis_df = df[valid_mask].copy()
-            customer_analysis_df["準時"] = on_time_mask[valid_mask]
-            customer_analysis_df["延遲"] = late_mask[valid_mask]
+            # 建立客戶表現分析資料
+            customer_data = []
+            valid_indices = df.index[valid_mask]
             
-            customer_performance = customer_analysis_df.groupby(cust_name_col, as_index=False).agg({
-                "準時": ["count", "sum"],  # count給有效筆數，sum給準時筆數
-                "延遲": "sum"              # 延遲筆數
-            })
+            for idx in valid_indices:
+                customer_data.append({
+                    "客戶名稱": df.loc[idx, cust_name_col],
+                    "準時": on_time_mask.loc[idx],
+                    "延遲": late_mask.loc[idx]
+                })
             
-            # 重新整理欄位名稱
-            customer_performance.columns = [
-                "客戶名稱", "有效筆數", "準時筆數", "延遲筆數"
-            ]
+            customer_df = pd.DataFrame(customer_data)
             
-            customer_performance["達交率(%)"] = (
-                customer_performance["準時筆數"] / customer_performance["有效筆數"] * 100
-            ).round(2)
-            
-            customer_performance = customer_performance.sort_values("達交率(%)", ascending=False)
-            
-            # 客戶表現分級
-            customer_performance["表現等級"] = pd.cut(
-                customer_performance["達交率(%)"],
-                bins=[0, 80, 90, 95, 100],
-                labels=["需改善", "一般", "良好", "優秀"],
-                include_lowest=True
-            )
-            
-            st.dataframe(
-                customer_performance.style.format({
-                    "有效筆數": "{:,}",
-                    "準時筆數": "{:,}",
-                    "延遲筆數": "{:,}",
-                    "達交率(%)": "{:.2f}%"
-                }).background_gradient(subset=["達交率(%)"], cmap="RdYlGn"),
-                use_container_width=True
-            )
-            
-            st.download_button(
-                "📥 下載客戶表現分析",
-                data=customer_performance.to_csv(index=False).encode("utf-8-sig"),
-                file_name="客戶達交表現.csv",
-                mime="text/csv",
-            )
+            if not customer_df.empty:
+                customer_performance = customer_df.groupby("客戶名稱", as_index=False).agg({
+                    "準時": ["count", "sum"],
+                    "延遲": "sum"
+                })
+                
+                # 重新命名欄位
+                customer_performance.columns = ["客戶名稱", "有效筆數", "準時筆數", "延遲筆數"]
+                
+                customer_performance["達交率(%)"] = (
+                    customer_performance["準時筆數"] / customer_performance["有效筆數"] * 100
+                ).round(2)
+                
+                customer_performance = customer_performance.sort_values("達交率(%)", ascending=False)
+                
+                # 客戶表現分級
+                customer_performance["表現等級"] = pd.cut(
+                    customer_performance["達交率(%)"],
+                    bins=[0, 80, 90, 95, 100],
+                    labels=["需改善", "一般", "良好", "優秀"],
+                    include_lowest=True
+                )
+                
+                # 手動格式化顯示
+                display_customer = customer_performance.copy()
+                for col in ["有效筆數", "準時筆數", "延遲筆數"]:
+                    display_customer[col] = display_customer[col].apply(lambda x: f"{x:,}")
+                display_customer["達交率(%)"] = display_customer["達交率(%)"].apply(lambda x: f"{x:.2f}%")
+                
+                st.dataframe(display_customer, use_container_width=True)
+                
+                st.download_button(
+                    "📥 下載客戶表現分析",
+                    data=customer_performance.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="客戶達交表現.csv",
+                    mime="text/csv",
+                )
+            else:
+                st.info("無客戶數據可供分析")
+        else:
+            st.info("無客戶名稱欄位，無法進行客戶表現分析")
 
 def enhanced_area_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str]], exclude_swi_mask: pd.Series, topn_cities: int) -> None:
     """
@@ -704,14 +749,12 @@ def enhanced_area_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str]], 
     with tab1:
         col1, col2 = st.columns([1, 1])
         with col1:
-            st.dataframe(
-                city_stats.style.format({
-                    "筆數": "{:,}",
-                    "佔比(%)": "{:.2f}%"
-                }),
-                use_container_width=True,
-                height=400
-            )
+            # 手動格式化
+            display_city_stats = city_stats.copy()
+            display_city_stats["筆數"] = display_city_stats["筆數"].apply(lambda x: f"{x:,}")
+            display_city_stats["佔比(%)"] = display_city_stats["佔比(%)"].apply(lambda x: f"{x:.2f}%")
+            
+            st.dataframe(display_city_stats, use_container_width=True, height=400)
         with col2:
             # 台灣地圖視覺化 (使用長條圖代替)
             fig_map = px.bar(
@@ -749,14 +792,15 @@ def enhanced_area_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str]], 
                 .sort_values([cust_name_col, "筆數"], ascending=[True, False])
             )
             
-            st.dataframe(
-                top_customer_cities.rename(columns={cust_name_col: "客戶名稱"}).style.format({
-                    "筆數": "{:,}",
-                    "客戶總筆數": "{:,}",
-                    "縣市佔比(%)": "{:.2f}%"
-                }),
-                use_container_width=True
-            )
+            # 手動格式化
+            display_top_cities = top_customer_cities.rename(columns={cust_name_col: "客戶名稱"}).copy()
+            for col in ["筆數", "客戶總筆數"]:
+                if col in display_top_cities.columns:
+                    display_top_cities[col] = display_top_cities[col].apply(lambda x: f"{x:,}")
+            if "縣市佔比(%)" in display_top_cities.columns:
+                display_top_cities["縣市佔比(%)"] = display_top_cities["縣市佔比(%)"].apply(lambda x: f"{x:.2f}%")
+            
+            st.dataframe(display_top_cities, use_container_width=True)
             
             st.download_button(
                 "📥 下載客戶區域分析",
@@ -865,27 +909,25 @@ def enhanced_loading_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str]
     if sort_columns:
         detailed_loading_df = detailed_loading_df.sort_values(sort_columns).reset_index(drop=True)
     
-    # 車次彙總統計
-    summary_columns = {}
-    for display_name, internal_name in numeric_display_cols.items():
-        if internal_name in loading_df.columns:
-            summary_columns[internal_name] = ["sum", "count"]
+    # 車次彙總統計 - 簡化版
+    summary_data = []
+    for trip_code in loading_df["車次代碼"].unique():
+        trip_data = loading_df[loading_df["車次代碼"] == trip_code]
+        summary_row = {"車次代碼": trip_code}
+        
+        for display_name, internal_name in numeric_display_cols.items():
+            if internal_name in loading_df.columns:
+                summary_row[f"{display_name}小計"] = trip_data[internal_name].sum()
+                summary_row[f"{display_name}項目數"] = trip_data[internal_name].count()
+        
+        summary_data.append(summary_row)
     
-    if summary_columns:
-        trip_summary = loading_df.groupby("車次代碼").agg(summary_columns).round(3)
-        # 重新整理欄位名稱
-        new_cols = []
-        for col_tuple in trip_summary.columns:
-            internal_name, agg_func = col_tuple
-            display_name = next((k for k, v in numeric_display_cols.items() if v == internal_name), internal_name)
-            if agg_func == "sum":
-                new_cols.append(f"{display_name}小計")
-            else:
-                new_cols.append(f"{display_name}項目數")
-        trip_summary.columns = new_cols
-        trip_summary = trip_summary.reset_index()
-    else:
-        trip_summary = loading_df.groupby("車次代碼").size().reset_index(name="項目數")
+    trip_summary = pd.DataFrame(summary_data)
+    
+    # 四捨五入數值欄位
+    for col in trip_summary.columns:
+        if "小計" in col and trip_summary[col].dtype in ['float64', 'int64']:
+            trip_summary[col] = trip_summary[col].round(3)
     
     # 分析標籤
     load_tab1, load_tab2, load_tab3 = st.tabs(["📦 裝載明細", "🚛 車次彙總", "📊 裝載分析"])
@@ -906,18 +948,23 @@ def enhanced_loading_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str]
         with col1:
             create_enhanced_metric_card("總車次數", f"{total_trips:,}")
         with col2:
-            avg_items_per_trip = detailed_loading_df.groupby("車次代碼").size().mean()
-            create_enhanced_metric_card("平均每車項目數", f"{avg_items_per_trip:.1f}")
+            if not detailed_loading_df.empty:
+                avg_items_per_trip = detailed_loading_df.groupby("車次代碼").size().mean()
+                create_enhanced_metric_card("平均每車項目數", f"{avg_items_per_trip:.1f}")
         with col3:
-            if "銅重量(噸)小計" in trip_summary.columns:
-                valid_trips = trip_summary[trip_summary["銅重量(噸)小計"] > 0]
-                avg_weight = valid_trips["銅重量(噸)小計"].mean() if not valid_trips.empty else 0
+            copper_col = "銅重量(噸)小計"
+            if copper_col in trip_summary.columns:
+                valid_trips = trip_summary[trip_summary[copper_col] > 0]
+                avg_weight = valid_trips[copper_col].mean() if not valid_trips.empty else 0
                 create_enhanced_metric_card("平均載重(噸)", f"{avg_weight:.2f}")
         
-        st.dataframe(
-            trip_summary.style.format({col: "{:.3f}" for col in trip_summary.columns if "小計" in col}),
-            use_container_width=True
-        )
+        # 格式化車次彙總表格
+        display_trip_summary = trip_summary.copy()
+        for col in display_trip_summary.columns:
+            if "小計" in col and display_trip_summary[col].dtype in ['float64', 'int64']:
+                display_trip_summary[col] = display_trip_summary[col].apply(lambda x: f"{x:.3f}")
+        
+        st.dataframe(display_trip_summary, use_container_width=True)
         
         st.download_button(
             "📥 下載車次彙總",
@@ -927,15 +974,16 @@ def enhanced_loading_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str]
         )
     
     with load_tab3:
-        if "銅重量(噸)小計" in trip_summary.columns:
+        copper_col = "銅重量(噸)小計"
+        if copper_col in trip_summary.columns:
             # 載重分佈分析
-            weight_data = trip_summary[trip_summary["銅重量(噸)小計"] > 0]["銅重量(噸)小計"]
+            weight_data = trip_summary[trip_summary[copper_col] > 0][copper_col]
             
-            if not weight_data.empty:
+            if not weight_data.empty and len(weight_data) > 1:
                 fig_dist = go.Figure()
                 fig_dist.add_trace(go.Histogram(
                     x=weight_data,
-                    nbinsx=20,
+                    nbinsx=min(20, len(weight_data)),
                     name="載重分佈",
                     marker_color="lightblue"
                 ))
@@ -950,15 +998,17 @@ def enhanced_loading_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str]
                 stats_summary = pd.DataFrame({
                     "統計項目": ["最小載重", "最大載重", "平均載重", "中位數載重", "標準差"],
                     "數值(噸)": [
-                        weight_data.min(),
-                        weight_data.max(),
-                        weight_data.mean(),
-                        weight_data.median(),
-                        weight_data.std()
+                        f"{weight_data.min():.3f}",
+                        f"{weight_data.max():.3f}",
+                        f"{weight_data.mean():.3f}",
+                        f"{weight_data.median():.3f}",
+                        f"{weight_data.std():.3f}"
                     ]
-                }).round(3)
+                })
                 
                 st.dataframe(stats_summary, use_container_width=True)
+            else:
+                st.info("載重數據不足，無法進行分佈分析")
         else:
             st.info("無銅重量數據可供載重分析")
 
@@ -1060,6 +1110,10 @@ def display_column_mapping_interface(df: pd.DataFrame, auto_mapping: Dict[str, O
 def main():
     """主程式入口"""
     
+    # 依賴狀態顯示
+    if not EXCEL_AVAILABLE:
+        st.warning("⚠️ 未安裝 openpyxl，Excel 功能將降級為 CSV")
+    
     # 檔案上傳區
     st.markdown("### 📁 檔案上傳")
     uploaded_file = st.file_uploader(
@@ -1114,10 +1168,10 @@ def main():
         basic_stats = pd.DataFrame({
             "項目": ["總記錄數", "欄位數", "空值總數", "重複記錄數"],
             "數值": [
-                len(df),
-                len(df.columns),
-                df.isnull().sum().sum(),
-                df.duplicated().sum()
+                f"{len(df):,}",
+                f"{len(df.columns)}",
+                f"{df.isnull().sum().sum():,}",
+                f"{df.duplicated().sum():,}"
             ]
         })
         st.dataframe(basic_stats, use_container_width=True)
@@ -1126,8 +1180,8 @@ def main():
         final_column_mapping = display_column_mapping_interface(df, auto_detected_mapping)
     
     with main_tab1:
-        # 使用最終的欄位對應
-        final_column_mapping = auto_detected_mapping  # 簡化版：直接使用自動偵測
+        # 使用自動偵測的欄位對應
+        final_column_mapping = auto_detected_mapping
         
         # 側邊欄篩選控制
         with st.sidebar:
@@ -1150,82 +1204,4 @@ def main():
                     unique_customers = sorted(df[final_column_mapping["cust_name"]].dropna().unique())
                     selected_customers = st.multiselect(
                         "客戶名稱",
-                        options=unique_customers[:100],  # 限制顯示數量避免介面過載
-                        default=[],
-                        key="filter_customers"
-                    )
-                
-                # 日期範圍篩選
-                date_filter_range = None
-                if final_column_mapping.get("due_date"):
-                    due_date_series = safe_datetime_convert(df[final_column_mapping["due_date"]])
-                    if due_date_series.notna().any():
-                        min_date = due_date_series.min().date()
-                        max_date = due_date_series.max().date()
-                        date_filter_range = st.date_input(
-                            "指定到貨日期範圍",
-                            value=(min_date, max_date),
-                            min_value=min_date,
-                            max_value=max_date,
-                            key="date_range_filter"
-                        )
-            
-            # 進階設定
-            with st.expander("⚙️ 進階設定", expanded=False):
-                topn_cities_setting = st.slider(
-                    "每客戶顯示前N個配送縣市", 
-                    min_value=1, 
-                    max_value=10, 
-                    value=3,
-                    key="topn_cities_slider"
-                )
-                
-                enable_detailed_analysis = st.checkbox(
-                    "啟用詳細分析模式", 
-                    value=True,
-                    help="包含更多統計圖表和深度分析"
-                )
-        
-        # 套用篩選條件
-        filtered_data = df.copy()
-        
-        if selected_ship_types and final_column_mapping.get("ship_type"):
-            filtered_data = filtered_data[filtered_data[final_column_mapping["ship_type"]].isin(selected_ship_types)]
-        
-        if selected_customers and final_column_mapping.get("cust_name"):
-            filtered_data = filtered_data[filtered_data[final_column_mapping["cust_name"]].isin(selected_customers)]
-        
-        if date_filter_range and len(date_filter_range) == 2 and final_column_mapping.get("due_date"):
-            start_date = pd.to_datetime(date_filter_range[0])
-            end_date = pd.to_datetime(date_filter_range[1])
-            due_dates = safe_datetime_convert(filtered_data[final_column_mapping["due_date"]])
-            date_mask = (due_dates >= start_date) & (due_dates <= end_date)
-            filtered_data = filtered_data[date_mask]
-        
-        # 顯示篩選結果
-        if len(filtered_data) != len(df):
-            st.info(f"🔍 篩選後顯示 {len(filtered_data):,} 筆記錄（原始：{len(df):,} 筆）")
-        
-        # SWI排除邏輯
-        exclude_swi_condition = pd.Series(True, index=filtered_data.index)
-        if final_column_mapping.get("ship_type"):
-            exclude_swi_condition = filtered_data[final_column_mapping["ship_type"]] != "SWI-寄庫"
-        
-        # 執行各項分析
-        if not filtered_data.empty:
-            enhanced_shipment_analysis(filtered_data, final_column_mapping)
-            st.markdown("---")
-            enhanced_delivery_performance(filtered_data, final_column_mapping, exclude_swi_condition)
-            st.markdown("---") 
-            enhanced_area_analysis(filtered_data, final_column_mapping, exclude_swi_condition, topn_cities_setting)
-            st.markdown("---")
-            enhanced_loading_analysis(filtered_data, final_column_mapping, exclude_swi_condition)
-        else:
-            st.warning("⚠️ 篩選條件過於嚴格，無數據可顯示")
-
-# ========================
-# 程式入口
-# ========================
-
-if __name__ == "__main__":
-    main()
+                        options=unique_customers[:100],  # 限制
