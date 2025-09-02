@@ -6,7 +6,7 @@ import plotly.express as px
 
 st.set_page_config(page_title="TMS出貨配送數據分析", page_icon="📊", layout="wide")
 st.title("📊 TMS出貨配送數據分析")
-st.caption("上傳 Excel/CSV → 出貨類型筆數（含銅重量kg）→ 達交率（僅日期，排除SWI-寄庫）→ 配送區域分析 → 配送裝載分析（僅完成）")
+st.caption("上傳 Excel/CSV → 出貨類型筆數（含銅重量kg→噸換算）→ 配送達交率（僅日期，排除SWI-寄庫）→ 配送區域分析 → 配送裝載分析（僅完成）")
 
 # ---------- 檔案上傳 ----------
 file = st.file_uploader(
@@ -48,21 +48,21 @@ if file:
 
     # ---- 自動欄位偵測（不顯示 UI） ----
     cols = list(df.columns)
-    ship_type_col   = _guess_col(cols, ["出貨申請類型", "出貨類型", "配送類型", "類型"])
-    due_date_col    = _guess_col(cols, ["指定到貨日期", "到貨日期", "指定到貨", "到貨日"])
-    sign_date_col   = _guess_col(cols, ["客戶簽收日期", "簽收日期", "簽收日", "客戶簽收日期/時/分"])
-    cust_id_col     = _guess_col(cols, ["客戶編號", "客戶代號", "客編"])
-    cust_name_col   = _guess_col(cols, ["客戶名稱", "客名", "客戶"])
-    address_col     = _guess_col(cols, ["地址", "收貨地址", "送貨地址", "交貨地址"])
-    copper_ton_col  = _guess_col(cols, ["銅重量(噸)", "銅重量(噸數)", "銅噸", "銅重量"])  # 實際單位=kg
-    qty_col         = _guess_col(cols, ["出貨數量", "數量", "出貨量"])
-    ship_no_col     = _guess_col(cols, ["出庫單號", "出庫單", "出庫編號"])
-    do_col          = _guess_col(cols, ["DO號", "DO", "出貨單號", "交貨單號"])
-    item_desc_col   = _guess_col(cols, ["料號說明", "品名", "品名規格", "物料說明"])
-    lot_col         = _guess_col(cols, ["批次", "批號", "Lot"])
-    fg_net_ton_col  = _guess_col(cols, ["成品淨重(噸)", "成品淨量(噸)", "淨重(噸)"])
-    fg_gross_ton_col= _guess_col(cols, ["成品毛重(噸)", "成品毛量(噸)", "毛重(噸)"])
-    status_col      = _guess_col(cols, ["通知單項次狀態", "項次狀態", "狀態"])
+    ship_type_col    = _guess_col(cols, ["出貨申請類型", "出貨類型", "配送類型", "類型"])
+    due_date_col     = _guess_col(cols, ["指定到貨日期", "到貨日期", "指定到貨", "到貨日"])
+    sign_date_col    = _guess_col(cols, ["客戶簽收日期", "簽收日期", "簽收日", "客戶簽收日期/時/分"])
+    cust_id_col      = _guess_col(cols, ["客戶編號", "客戶代號", "客編"])
+    cust_name_col    = _guess_col(cols, ["客戶名稱", "客名", "客戶"])
+    address_col      = _guess_col(cols, ["地址", "收貨地址", "送貨地址", "交貨地址"])
+    copper_ton_col   = _guess_col(cols, ["銅重量(噸)", "銅重量(噸數)", "銅噸", "銅重量"])  # 實際單位=kg
+    qty_col          = _guess_col(cols, ["出貨數量", "數量", "出貨量"])
+    ship_no_col      = _guess_col(cols, ["出庫單號", "出庫單", "出庫編號"])
+    do_col           = _guess_col(cols, ["DO號", "DO", "出貨單號", "交貨單號"])
+    item_desc_col    = _guess_col(cols, ["料號說明", "品名", "品名規格", "物料說明"])
+    lot_col          = _guess_col(cols, ["批次", "批號", "Lot"])
+    fg_net_ton_col   = _guess_col(cols, ["成品淨重(噸)", "成品淨量(噸)", "淨重(噸)"])
+    fg_gross_ton_col = _guess_col(cols, ["成品毛重(噸)", "成品毛量(噸)", "毛重(噸)"])
+    status_col       = _guess_col(cols, ["通知單項次狀態", "項次狀態", "狀態"])
 
     # Tabs：分析 / 原始資料
     tab_analysis, tab_raw = st.tabs(["📊 出貨&達交分析", "📄 原始資料預覽"])
@@ -78,11 +78,22 @@ if file:
         with st.sidebar:
             st.header("⚙️ 操作區（常用篩選）")
 
+            # 0) 出貨申請類型：選項按筆數由高到低排序，並可預設勾選前 N 類型
+            if ship_type_col and ship_type_col in df.columns:
+                ship_counts = (
+                    df[ship_type_col].astype(str).fillna("(空白)").value_counts()
+                )
+                ship_opts_sorted = ship_counts.index.tolist()
+                preselect_top_n = st.slider("預設勾選前 N 類型", min_value=0, max_value=min(10, len(ship_opts_sorted)), value=3, step=1)
+                default_types = ship_opts_sorted[:preselect_top_n] if preselect_top_n > 0 else []
+                sel_types = st.multiselect("出貨申請類型（多選）", options=ship_opts_sorted, default=default_types, help="選項已按出現次數多→少排序")
+            else:
+                sel_types = []
+
             # 1) 客戶名稱（可搜尋多選）
             if cust_name_col and cust_name_col in df.columns:
                 name_opts = sorted(df[cust_name_col].dropna().astype(str).unique().tolist())
                 sel_names = st.multiselect("客戶名稱（可搜尋）", options=name_opts, default=[])
-
             else:
                 sel_names = []
 
@@ -93,14 +104,7 @@ if file:
             else:
                 sel_ids = []
 
-            # 3) 出貨申請類型（多選）
-            if ship_type_col and ship_type_col in df.columns:
-                ship_opts = sorted(df[ship_type_col].dropna().astype(str).unique().tolist())
-                sel_types = st.multiselect("出貨申請類型（多選）", options=ship_opts, default=[])
-            else:
-                sel_types = []
-
-            # 4) 指定到貨日期（日期區間）
+            # 3) 指定到貨日期（日期區間）
             if due_date_col and due_date_col in df.columns:
                 due_series = to_dt(df[due_date_col])
                 min_date = due_series.min().date() if not due_series.dropna().empty else None
@@ -112,7 +116,7 @@ if file:
             else:
                 date_range = None
 
-            # 5) 料號說明（可搜尋多選）
+            # 4) 料號說明（可搜尋多選）
             if item_desc_col and item_desc_col in df.columns:
                 item_opts = sorted(df[item_desc_col].dropna().astype(str).unique().tolist())
                 sel_items = st.multiselect("料號說明（可搜尋）", options=item_opts, default=[])
@@ -121,15 +125,21 @@ if file:
 
             st.markdown("---")
 
-            # 6) 選擇要篩選的欄位（可略） → 移到最後
+            # 5) 其它：選擇要篩選的欄位（可略）
             filter_col = st.selectbox("選擇要篩選的欄位（可略）", ["（不篩選）"] + cols)
             extra_selected_vals = []
             if filter_col != "（不篩選）":
                 unique_vals = df[filter_col].dropna().unique().tolist()
                 extra_selected_vals = st.multiselect("選取值（可多選）", unique_vals)
 
+            # 6) 每客戶 Top N 縣市（供③使用）
+            topn_cities = st.slider("每客戶 Top N 縣市（③用）", min_value=1, max_value=10, value=3, step=1)
+
         # ---- 套用篩選 ----
         data = df.copy()
+
+        if sel_types and (ship_type_col in data.columns):
+            data = data[data[ship_type_col].astype(str).isin(sel_types)]
 
         if sel_names and (cust_name_col in data.columns):
             data = data[data[cust_name_col].astype(str).isin(sel_names)]
@@ -137,13 +147,10 @@ if file:
         if sel_ids and (cust_id_col in data.columns):
             data = data[data[cust_id_col].astype(str).isin(sel_ids)]
 
-        if sel_types and (ship_type_col in data.columns):
-            data = data[data[ship_type_col].astype(str).isin(sel_types)]
-
         if date_range and (due_date_col in data.columns):
-            due_day = to_dt(data[due_date_col]).dt.normalize()
+            due_day_all = to_dt(data[due_date_col]).dt.normalize()
             start_d, end_d = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
-            data = data[(due_day >= start_d) & (due_day <= end_d)]
+            data = data[(due_day_all >= start_d) & (due_day_all <= end_d)]
 
         if sel_items and (item_desc_col in data.columns):
             data = data[data[item_desc_col].astype(str).isin(sel_items)]
@@ -157,7 +164,7 @@ if file:
             exclude_swi_mask = data[ship_type_col] != "SWI-寄庫"
 
         # =====================================================
-        # ① 出貨類型筆數統計（含銅重量(kg)合計；「銅重量(噸)」實際單位=kg）
+        # ① 出貨類型筆數統計（含銅重量換算噸；「銅重量(噸)」欄位實際單位=kg）
         # =====================================================
         st.subheader("① 出貨類型筆數統計")
         if ship_type_col in data.columns:
@@ -170,7 +177,7 @@ if file:
             )
             total_rows = int(type_counts["筆數"].sum())
 
-            # 銅重量合計（以 kg 解讀）
+            # 銅重量合計（kg）→ 顯示成「噸」
             if copper_ton_col in data.columns:
                 data["_copper_kg"] = pd.to_numeric(data[copper_ton_col], errors="coerce")
                 copper_sum = (
@@ -186,14 +193,18 @@ if file:
                 merged = type_counts.copy()
                 merged["銅重量(kg)合計"] = None
 
-            chart_choice = st.radio("圖表類型", ["長條圖", "圓餅圖", "折線圖"], horizontal=True)
+            # —— UI：圖表類型（移除折線） + 素色圓餅配色
+            chart_choice = st.radio("圖表類型", ["長條圖", "圓餅圖"], horizontal=True)
+            neutral_colors = ["#7f8c8d", "#95a5a6", "#bdc3c7", "#dfe6e9", "#b2bec3", "#636e72", "#ced6e0"]
 
             c1, c2 = st.columns([1, 1])
             with c1:
-                st.write(f"**加總筆數：{total_rows:,}**")
+                st.write(f"**資料筆數：{total_rows:,}**")
+                # 總銅重量(噸)（四捨五入到 2 位）
                 if "銅重量(kg)合計" in merged.columns:
-                    total_copper = pd.to_numeric(merged["銅重量(kg)合計"], errors="coerce").sum()
-                    st.write(f"**總銅重量 (kg)：{total_copper:,.2f}**")
+                    total_copper_kg = pd.to_numeric(merged["銅重量(kg)合計"], errors="coerce").sum()
+                    total_copper_ton = round((total_copper_kg or 0) / 1000.0, 2)
+                    st.write(f"**總銅重量(噸)：{total_copper_ton:,.2f}**")
                 st.dataframe(merged, use_container_width=True)
                 st.download_button(
                     "下載出貨類型統計 CSV",
@@ -205,10 +216,11 @@ if file:
                 if not type_counts.empty:
                     if chart_choice == "長條圖":
                         fig = px.bar(type_counts, x="出貨類型", y="筆數")
-                    elif chart_choice == "圓餅圖":
-                        fig = px.pie(type_counts, names="出貨類型", values="筆數", hole=0)
-                    else:
-                        fig = px.line(type_counts, x="出貨類型", y="筆數", markers=True)
+                    else:  # 圓餅圖
+                        fig = px.pie(
+                            type_counts, names="出貨類型", values="筆數",
+                            color_discrete_sequence=neutral_colors, hole=0
+                        )
                     st.plotly_chart(fig, use_container_width=True)
         else:
             st.warning("找不到『出貨申請類型』欄位，請確認上傳檔案欄名。")
@@ -216,9 +228,9 @@ if file:
         st.markdown("---")
 
         # =====================================================
-        # ② 達交率（僅比對日期，不含時分秒；排除 SWI-寄庫）
+        # ② 配送達交率（僅比對日期，不含時分秒；排除 SWI-寄庫）
         # =====================================================
-        st.subheader("② 達交率（僅比對日期，不含時分秒）")
+        st.subheader("② 配送達交率（僅比對日期，不含時分秒）")
         if (due_date_col in data.columns) and (sign_date_col in data.columns):
             due_dt = to_dt(data[due_date_col])
             sign_dt = to_dt(data[sign_date_col])
@@ -321,9 +333,8 @@ if file:
                     fig_city = px.bar(city_counts, x="縣市", y="筆數")
                     st.plotly_chart(fig_city, use_container_width=True)
 
-            # 各客戶常出貨縣市（每客戶 Top 3，預設）
+            # 各客戶常出貨縣市（每客戶 Top N）
             if cust_name_col in region_df.columns:
-                topn = 3
                 cust_city = (
                     region_df.groupby([cust_name_col, "縣市"]).size()
                     .reset_index(name="筆數")
@@ -331,9 +342,9 @@ if file:
                 cust_city["客戶總筆數"] = cust_city.groupby(cust_name_col)["筆數"].transform("sum")
                 cust_city["縣市佔比(%)"] = (cust_city["筆數"] / cust_city["客戶總筆數"] * 100).round(2)
                 cust_city = cust_city.sort_values([cust_name_col, "筆數"], ascending=[True, False])
-                top_table = cust_city.groupby(cust_name_col).head(topn)
+                top_table = cust_city.groupby(cust_name_col).head(topn_cities)
 
-                st.write(f"**各客戶常出貨縣市（每客戶 Top {topn}）**")
+                st.write(f"**各客戶常出貨縣市（每客戶 Top {topn_cities}）**")
                 st.dataframe(top_table.rename(columns={cust_name_col: "客戶名稱"}), use_container_width=True)
                 st.download_button(
                     "下載各客戶常出貨縣市 CSV",
