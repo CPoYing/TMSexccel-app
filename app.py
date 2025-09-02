@@ -6,6 +6,13 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 
+# 確保必要依賴
+try:
+    import openpyxl
+except ImportError:
+    st.error("請安裝 openpyxl: pip install openpyxl")
+    st.stop()
+
 # ========================
 # 頁面設定與 CSS 樣式
 # ========================
@@ -105,6 +112,7 @@ def load_data(file_buffer: io.BytesIO, file_type: str) -> pd.DataFrame:
             file_buffer.seek(0)
             return pd.read_csv(file_buffer, encoding='utf-8', errors='ignore')
         elif file_type in ["xlsx", "xls"]:
+            file_buffer.seek(0)
             return pd.read_excel(file_buffer, engine="openpyxl")
     except Exception as e:
         st.error(f"檔案載入失敗: {str(e)}")
@@ -379,9 +387,14 @@ def enhanced_shipment_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str
                 mime="text/csv",
             )
         with col2:
+            # 建立 Excel 檔案的 BytesIO 緩衝區
+            excel_buffer = io.BytesIO()
+            final_stats.to_excel(excel_buffer, index=False, engine='openpyxl')
+            excel_buffer.seek(0)
+            
             st.download_button(
                 "📥 下載統計表 (Excel)",
-                data=final_stats.to_excel(index=False).encode() if hasattr(final_stats.to_excel(index=False), 'encode') else final_stats.to_excel(index=False, engine='openpyxl'),
+                data=excel_buffer.getvalue(),
                 file_name="出貨類型統計.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
