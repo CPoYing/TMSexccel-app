@@ -265,10 +265,10 @@ def enhanced_shipment_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str
                 fig.update_traces(marker_color=ELEGANT_COLORS['secondary'])
             elif chart_type == "圓餅圖":
                 fig = px.pie(final_stats, names="出貨類型", values="筆數", title="出貨類型佔比分佈", color_discrete_sequence=elegant_palette)
+                fig.update_traces(textposition='inside', textinfo='percent+label')
             else:  # 環形圖
                 fig = px.pie(final_stats, names="出貨類型", values="筆數", title="出貨類型佔比分佈", hole=0.4, color_discrete_sequence=elegant_palette)
-            
-            fig.update_traces(textposition='inside', textinfo='percent+label')
+                fig.update_traces(textposition='inside', textinfo='percent+label')
             st.plotly_chart(fig, use_container_width=True)
         
         with chart_col2:
