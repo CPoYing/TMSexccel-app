@@ -264,7 +264,12 @@ def enhanced_shipment_analysis(df: pd.DataFrame, col_map: Dict[str, Optional[str
     tab1, tab2 = st.tabs(["📋 詳細統計", "📊 視覺化圖表"])
     
     with tab1:
-        st.dataframe(final_stats, use_container_width=True, height=400)
+        # 新增的邏輯：如果銅重量數據全為空，則不顯示該欄位
+        display_stats = final_stats.copy()
+        if "銅重量(噸)合計" in display_stats.columns and not display_stats["銅重量(噸)合計"].notna().any():
+            display_stats = display_stats.drop(columns=["銅重量(噸)合計"])
+
+        st.dataframe(display_stats, use_container_width=True, height=400)
         
         col1, col2 = st.columns(2)
         with col1:
@@ -377,11 +382,16 @@ def enhanced_delivery_performance(df: pd.DataFrame, col_map: Dict[str, Optional[
             if col_map.get("cust_name") and col_map["cust_name"] in df.columns:
                 late_details["客戶名稱"] = [df.loc[i, col_map["cust_name"]] for i in late_indices]
             
+            # 修正後的邏輯：只對延遲天數 > 0 的數據進行分類
+            late_details = late_details[late_details["延遲天數"] > 0].copy()
+
             # 延遲程度分類
             late_details["延遲程度"] = pd.cut(
                 late_details["延遲天數"],
-                bins=[-1, 0, 3, 7, 30, 999],
-                labels=["準時", "輕微延遲(1-3天)", "中度延遲(4-7天)", "重度延遲(8-30天)", "嚴重延遲(>30天)"]
+                bins=[0, 3, 7, 30, 999],
+                labels=["輕微延遲(1-3天)", "中度延遲(4-7天)", "重度延遲(8-30天)", "嚴重延遲(>30天)"],
+                right=True,
+                include_lowest=True
             )
             
             late_details = late_details.sort_values("延遲天數", ascending=False)
@@ -393,7 +403,7 @@ def enhanced_delivery_performance(df: pd.DataFrame, col_map: Dict[str, Optional[
             st.dataframe(display_late_details, use_container_width=True, height=400)
             
             # 延遲分佈圖 - 彩色版
-            delay_dist = late_details["延遲程度"].value_counts()
+            delay_dist = late_details["延遲程度"].value_counts().sort_index()
             fig_delay = px.bar(
                 x=delay_dist.index, 
                 y=delay_dist.values,
