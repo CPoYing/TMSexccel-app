@@ -1,4 +1,4 @@
-beautifulsoup4==4.12.3
-requests>=2.31.0   # 如果你也用了 requests 抓網頁，順便加進去
-pandas>=2.0.0      # 如果你用了 pandas 處理表格
-streamlit>=1.30.0  # 建議也鎖定 streamlit 版本
+streamlit
+requests
+beautifulsoup4
+pandas
